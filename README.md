@@ -1,6 +1,4 @@
-<img width="708" height="711" alt="image" src="https://github.com/user-attachments/assets/148bec71-1191-4882-9dfa-3f970b308871" />
-
-
+<img width="200" height="200" alt="image-Photoroom" src="https://github.com/user-attachments/assets/c9ce659a-46c3-4407-a4c6-0c1182531a55" />
 
 
 # Nintendo Land Recomp
