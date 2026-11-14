@@ -251,7 +251,7 @@ def run_gui():
         win = tk.Toplevel(root)
         win.title("Einstellungen")
         win.configure(bg=BG)
-        win.geometry("560x720")
+        win.geometry("560x430")
         frm = ttk.Frame(win, padding=16)
         frm.pack(fill="both", expand=True)
 
@@ -274,56 +274,11 @@ def run_gui():
         ttk.Checkbutton(frm, text="Mikrofon benutzen (GamePad-Mikro)", variable=v_mic).grid(
             row=7, column=0, columnspan=2, sticky="w")
 
-        ttk.Label(frm, text="Tastatur (Controller wird automatisch erkannt)", style="Section.TLabel").grid(
-            row=8, column=0, columnspan=2, sticky="w", pady=(12, 4))
-        keys = dict(settings.get("keys") or {})
-        canvas = tk.Canvas(frm, bg=BG, highlightthickness=0, height=300)
-        canvas.grid(row=9, column=0, columnspan=2, sticky="nsew")
-        sb = ttk.Scrollbar(frm, orient="vertical", command=canvas.yview)
-        sb.grid(row=9, column=2, sticky="ns")
-        canvas.configure(yscrollcommand=sb.set)
-        inner = ttk.Frame(canvas)
-        canvas.create_window((0, 0), window=inner, anchor="nw")
-        inner.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
-
-        def key_name(code):
-            names = {0x0D: "Enter", 0x08: "Backspace", 0x09: "Tab", 0x20: "Leertaste", 0x10: "Shift",
-                     0x11: "Strg", 0x12: "Alt", 0x1B: "Esc", 0x25: "Links", 0x26: "Hoch", 0x27: "Rechts",
-                     0x28: "Runter"}
-            if code in names:
-                return names[code]
-            if 0x30 <= code <= 0x5A:
-                return chr(code)
-            if 0x70 <= code <= 0x87:
-                return f"F{code - 0x6F}"
-            return f"Taste {code}"
-
-        def grab(name, btn):
-            btn.configure(text="... Taste druecken")
-
-            def on_key(e):
-                # Unter Windows ist e.keycode direkt der Windows-Tastencode
-                keys[name] = e.keycode
-                btn.configure(text=key_name(e.keycode))
-                win.unbind("<KeyPress>")
-                return "break"
-            win.bind("<KeyPress>", on_key)
-            win.focus_force()
-
-        for i, (name, label, default) in enumerate(pipeline.KEY_ACTIONS):
-            ttk.Label(inner, text=label).grid(row=i, column=0, sticky="w", padx=(0, 12), pady=1)
-            b = ttk.Button(inner, text=key_name(int(keys.get(name, default))), width=16)
-            b.configure(command=lambda n=name, bb=b: grab(n, bb))
-            b.grid(row=i, column=1, sticky="w", pady=1)
+        ttk.Label(frm, text="Steuerung", style="Section.TLabel").grid(row=8, column=0, sticky="w", pady=(12, 0))
+        ttk.Label(frm, text="Im Spiel F1 druecken: Tasten und Controller-Knoepfe live umbelegen.\n"
+                            "Controller werden automatisch erkannt (1. = GamePad, weitere = Wiimotes).",
+                  style="Sub.TLabel", justify="left").grid(row=9, column=0, columnspan=2, sticky="w")
         frm.columnconfigure(1, weight=1)
-        frm.rowconfigure(9, weight=1)
-
-        def reset_keys():
-            keys.clear()
-            win.destroy()
-            settings["keys"] = {}
-            pipeline.save_settings(settings)
-            open_settings()
 
         def save():
             settings["fullscreen"] = v_full.get()
@@ -336,13 +291,11 @@ def run_gui():
                 settings["window_w"], settings["window_h"] = int(w), int(h)
             except ValueError:
                 pass
-            settings["keys"] = keys
             pipeline.save_settings(settings)
             log("Einstellungen gespeichert.", )
             win.destroy()
         bottom = ttk.Frame(frm)
-        bottom.grid(row=10, column=0, columnspan=3, sticky="ew", pady=(12, 0))
-        ttk.Button(bottom, text="Standard-Tasten", command=reset_keys).pack(side="left")
+        bottom.grid(row=10, column=0, columnspan=3, sticky="ew", pady=(16, 0))
         ttk.Button(bottom, text="Speichern", style="Accent.TButton", command=save).pack(side="right")
 
     add_btn("cemu", "Spiel bauen", do_cemu, accent=False)

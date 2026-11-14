@@ -255,9 +255,6 @@ def write_game_settings(settings, exe):
              f"mic={b(settings.get('mic', True))}",
              f"window_w={int(settings.get('window_w', 1280))}",
              f"window_h={int(settings.get('window_h', 720))}"]
-    keys = settings.get("keys") or {}
-    for name, _label, default in KEY_ACTIONS:
-        lines.append(f"key_{name}=0x{int(keys.get(name, default)):02X}")
     with open(os.path.join(data, "nl_settings.ini"), "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
     return data
@@ -278,7 +275,7 @@ def step_launch(settings, game, log):
         if os.name == "nt":
             subprocess.run(["taskkill", "/F", "/IM", "NintendoLand.exe"], capture_output=True)
         data = write_game_settings(settings, game_exe)
-        log("Starte Nintendo Land ...  (F11 = Vollbild, Tab = TV/GamePad-Bild)")
+        log("Starte Nintendo Land ...  (Tab = TV/GamePad-Bild, F1 = Steuerung, F11 = Vollbild)")
         subprocess.Popen([game_exe, game.rpx], cwd=os.path.dirname(game_exe))
         log(f"Log vom Spiel: {os.path.join(data, 'log.txt')}")
         return
