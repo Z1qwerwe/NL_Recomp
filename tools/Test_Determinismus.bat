@@ -8,6 +8,7 @@ set NL_DET_HASH=1
 set NL_DET_HASH_EVERY=300
 set NL_DET_QUIT_AFTER=3600
 set NL_DET_TRACE=1
+set NL_DET_HASH_DETAIL=1
 taskkill /f /im NintendoLand.exe >nul 2>&1
 
 echo Sichere Spielstand, damit beide Laeufe gleich starten ...

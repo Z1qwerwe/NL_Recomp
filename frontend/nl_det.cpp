@@ -44,6 +44,32 @@ static std::chrono::steady_clock::time_point s_real0;
 static uint64 s_v0 = 0;
 static bool s_pace_init = false;
 
+static bool s_hash_detail = false;   // zusaetzlich Fingerabdruck pro 16-MB-Block loggen
+
+static uint64 hash_block(uint32 start, uint32 size) {
+    uint64 h = 1469598103934665603ull;
+    for (uint64 a = start; a < (uint64)start + size; a += 0x100000) {
+        if (!memory_isAddressRangeAccessible((MPTR)a, 0x100000)) continue;
+        const uint64* p = (const uint64*)(memory_base + a);
+        for (size_t i = 0; i < 0x100000 / 8; i++) {
+            h ^= p[i];
+            h *= 1099511628211ull;
+        }
+    }
+    return h;
+}
+
+static void log_hash_detail(uint64 vsync) {
+    std::string line;
+    auto add = [&](uint32 start, uint32 end, uint32 step) {
+        for (uint64 a = start; a < end; a += step)
+            line += fmt::format(" {:08x}:{:04x}", (uint32)a, (uint32)(hash_block((uint32)a, step) & 0xFFFF));
+    };
+    add(0x10000000, 0x50000000, 0x1000000);   // MEM2 in 16-MB-Bloecken
+    add(0xF4000000, 0xF6000000, 0x200000);    // MEM1 in 2-MB-Bloecken
+    cemuLog_log(LogType::Force, "NL-DET-B vsync={}{}", vsync, line);
+}
+
 static uint64 hash_guest_memory() {
     // FNV-1a ueber alle zugaenglichen 1-MB-Bloecke von MEM1 und MEM2
     uint64 h = 1469598103934665603ull;
@@ -79,6 +105,7 @@ static void det_tick() {
             uint64 h = hash_guest_memory();
             auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
             cemuLog_log(LogType::Force, "NL-DET vsync={} vclock={} hash={:016x} ({} ms)", s_vsync_count, now, h, ms);
+            if (s_hash_detail) log_hash_detail(s_vsync_count);
         }
         if (s_quit_after && s_vsync_count >= s_quit_after) {
             cemuLog_log(LogType::Force, "NL-DET: Testlauf fertig nach {} VSyncs", s_vsync_count);
@@ -135,6 +162,7 @@ bool nl_det_init() {
     if (const char* ev = getenv("NL_DET_HASH_EVERY")) s_hash_every = std::max(1, atoi(ev));
     if (const char* q = getenv("NL_DET_QUIT_AFTER")) s_quit_after = strtoull(q, nullptr, 10);
     if (const char* t = getenv("NL_DET_TRACE")) s_trace = *t == '1';
+    if (const char* hd = getenv("NL_DET_HASH_DETAIL")) s_hash_detail = *hd == '1';
     g_nl_det_tick = det_tick;
     g_nl_det_idle = det_idle;
     cemuLog_log(LogType::Force, "NL-DET: deterministischer Modus an (Fingerabdruck {})", s_hash ? "an" : "aus");
