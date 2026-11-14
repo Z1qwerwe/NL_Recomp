@@ -126,12 +126,18 @@ def run_gui():
             self.inner = tk.Frame(self, bg=CARD)
             self.win = self.create_window(pad, pad, window=self.inner, anchor="nw")
             self.bind("<Configure>", self._draw)
-            self.inner.bind("<Configure>", self._fit)
             self.auto_height = height is None
-
-        def _fit(self, e):
             if self.auto_height:
-                self.configure(height=e.height + 2 * self.pad + 6)
+                self.after(30, self.fit)
+
+        def fit(self):
+            """Hoehe an den Inhalt anpassen (Inhalt ausserhalb des sichtbaren Bereichs meldet keine Groesse)."""
+            if not self.auto_height:
+                return
+            self.inner.update_idletasks()
+            h = self.inner.winfo_reqheight() + 2 * self.pad + 6
+            if int(self.cget("height")) != h:
+                self.configure(height=h)
 
         def _draw(self, e=None):
             self.delete("bg")
@@ -186,6 +192,7 @@ def run_gui():
     path_row(0, "Spiel", "base_dir", "Ordner mit code/, content/ und meta/")
     path_row(1, "Update", "update_dir", "optional, ebenfalls entpackt")
     paths.columnconfigure(1, weight=1)
+    pcard.fit()
 
     # --- Kacheln -----------------------------------------------------------
     bar = tk.Frame(root, bg=BG)
