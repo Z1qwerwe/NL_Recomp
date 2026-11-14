@@ -1,0 +1,85 @@
+// Nintendo Land Recomp - gemeinsame Sachen von Fenster, Eingabe und Menue.
+#pragma once
+
+#include <string>
+#include <atomic>
+#include <filesystem>
+
+// ---------------------------------------------------------------------------
+// Einstellungen (nl_data/nl_settings.ini, gehoert dem Spiel, wird im Menue geaendert)
+// ---------------------------------------------------------------------------
+struct NLSettings {
+    // Bild
+    bool fullscreen = false;
+    int vsync = 1;               // 0 aus, 1 an, 2 Mailbox (wenig Verzoegerung)
+    int perf_overlay = 0;        // 0 aus, 1 FPS, 2 ausfuehrlich
+    bool gamepad_window = false; // GamePad-Bild in eigenem Fenster (Neustart)
+    int res_scale = 0;           // Index in kResScales (Neustart)
+    int upscale = 1;             // 0 bilinear, 1 bikubisch, 2 Hermite, 3 Pixel
+    int downscale = 0;
+    int aspect = 0;              // 0 Seitenverhaeltnis behalten, 1 strecken
+    int aniso = 0;               // Texturfilter: 0 Spiel, 1 2x, 2 4x, 3 8x, 4 16x (Neustart)
+    int window_w = 1280, window_h = 720;
+    // Spiel
+    int language = 3;            // Konsolensprache (3 = Deutsch), Neustart
+    bool async_shaders = true;   // Shader im Hintergrund kompilieren (Neustart)
+    int start_view = 1;          // 0 TV, 1 GamePad
+    // Ton
+    int volume = 60;
+    int pad_volume = 60;         // nur mit eigenem GamePad-Fenster
+    bool mic = true;             // (Neustart)
+    int mic_volume = 50;
+    // Steuerung
+    int button_layout = 0;       // 0 Nintendo (A rechts), 1 Xbox (A unten)
+    int deadzone = 20;           // Prozent
+};
+extern NLSettings g_nl;
+
+struct NLResScale { const char* name; float factor; };
+inline constexpr NLResScale kResScales[] = {
+    {"1280 x 720 (Original)", 1.0f}, {"1920 x 1080", 1.5f}, {"2560 x 1440", 2.0f},
+    {"3840 x 2160 (4K)", 3.0f}, {"5120 x 2880 (5K)", 4.0f},
+};
+inline constexpr int kResScaleCount = (int)(sizeof(kResScales) / sizeof(kResScales[0]));
+
+void nl_settings_load(const std::filesystem::path& path);
+void nl_settings_save();               // schreibt die Datei (ruft nur der Fenster-Thread)
+void nl_settings_apply_live();         // Werte, die sofort wirken, in den Unterbau uebernehmen
+void nl_write_resolution_pack(const std::filesystem::path& data_dir);
+
+// ---------------------------------------------------------------------------
+// Eingabe (nl_input.cpp)
+// ---------------------------------------------------------------------------
+struct NLAction { const char* name; const char* label; const char* help; uint64_t id; bool stick; };
+extern const NLAction kNLActions[];
+extern const int kNLActionCount;
+
+struct NLBinding { uint32_t key1 = 0, key2 = 0; int pad = -1; };   // pad -1 = keiner
+NLBinding& nl_binding(int action);
+void nl_input_init(const std::filesystem::path& controls_path);
+void nl_input_hotplug();               // neue Controller erkennen (Fenster-Thread, alle 500 ms)
+void nl_input_save();
+void nl_input_reset_defaults();
+std::string nl_key_name(uint32_t vk);
+std::string nl_pad_name(int code);
+std::string nl_gamepad_name();         // leer = kein Controller
+
+// Rohzustand fuer das Menue (Navigation und Aufnahme)
+struct NLPadSnapshot { bool connected = false; uint64_t buttons = 0; float lx = 0, ly = 0, rx = 0, ry = 0, lt = 0, rt = 0; };
+NLPadSnapshot nl_pad_snapshot();
+int nl_pad_capture(const NLPadSnapshot& rest);   // gedrueckter Knopf/Achse oder -1
+bool nl_pad_menu_pressed();                       // Menue-Knopf am Controller (Flanke)
+
+// ---------------------------------------------------------------------------
+// Menue (nl_menu.cpp)
+// ---------------------------------------------------------------------------
+extern std::atomic<bool> g_nl_menu_open;
+void nl_menu_install();
+void nl_menu_toggle();
+
+// ---------------------------------------------------------------------------
+// Fenster (main.cpp) - Auftraege an den Fenster-Thread
+// ---------------------------------------------------------------------------
+enum class NLRequest { SaveSettings, ApplyFullscreen, Restart, Quit };
+void nl_request(NLRequest r);
+bool nl_key_down(uint32_t vk);

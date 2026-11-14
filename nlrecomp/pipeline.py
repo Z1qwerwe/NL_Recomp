@@ -274,8 +274,8 @@ def step_launch(settings, game, log):
     if game_exe:
         if os.name == "nt":
             subprocess.run(["taskkill", "/F", "/IM", "NintendoLand.exe"], capture_output=True)
-        data = write_game_settings(settings, game_exe)
-        log("Starte Nintendo Land ...  (Tab = TV/GamePad-Bild, F1 = Steuerung, F11 = Vollbild)")
+        data = os.path.join(os.path.dirname(game_exe), "nl_data")
+        log("Starte Nintendo Land ...  (Esc = Menue mit Grafik, Ton und Steuerung, Tab = TV/GamePad-Bild)")
         subprocess.Popen([game_exe, game.rpx], cwd=os.path.dirname(game_exe))
         log(f"Log vom Spiel: {os.path.join(data, 'log.txt')}")
         return

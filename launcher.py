@@ -302,7 +302,6 @@ def run_gui():
     add_btn("shaders", "Shader vorbereiten", do_shaders)
     add_btn("stop", "Stopp", do_stop)
     ttk.Button(bar, text="Erweitert", command=open_advanced).pack(side="right")
-    ttk.Button(bar, text="Einstellungen", command=open_settings).pack(side="right", padx=(8, 0))
     play = ttk.Button(bar, text="SPIELEN", style="Accent.TButton", command=do_play)
     play.pack(side="right", padx=8)
     buttons["play"] = play
@@ -318,6 +317,7 @@ def run_gui():
 
     refresh_buttons()
     log("Wassap! Waehl oben deinen entpackten Nintendo-Land-Ordner aus.")
+    log("Grafik, Ton und Steuerung stellst du im Spiel ein: Esc druecken.")
     if settings["base_dir"]:
         on_paths_changed()
     pump()

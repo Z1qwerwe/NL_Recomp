@@ -43,6 +43,10 @@ def fetch(cemu_dir, run, log):
     if not os.path.isdir(os.path.join(cemu_dir, ".git")):
         log("Lade Cemu-Quellcode (einmalig, ein paar hundert MB) ...")
         run([git, "clone", CEMU_URL, cemu_dir], env=env)
+    head = subprocess.run([git, "-C", cemu_dir, "rev-parse", "HEAD"], env=env, capture_output=True, text=True).stdout.strip()
+    if head == CEMU_COMMIT:
+        # Schon auf dem richtigen Stand: nichts zuruecksetzen, sonst wird alles neu kompiliert
+        return
     run([git, "-C", cemu_dir, "fetch", "--depth", "1", "origin", CEMU_COMMIT], env=env, check=False)
     run([git, "-C", cemu_dir, "checkout", "-f", CEMU_COMMIT], env=env)
     log("Lade Cemu-Untermodule (vcpkg, imgui, ...) ...")
@@ -76,6 +80,11 @@ def patch(cemu_dir, log):
     fw = os.path.join(cemu_dir, "src", "util", "Fiber", "FiberWin.cpp")
     _patch_file(fw, "HANDLE fiberHandle = CreateFiber(2 * 1024 * 1024, ",
                 "HANDLE fiberHandle = CreateFiberEx(256 * 1024, 64 * 1024 * 1024, 0, ", log)
+    # 4. Haken fuer unser Menue im Spielbild (jedes Bild, vor Cemus eigenem Overlay)
+    lo = os.path.join(cemu_dir, "src", "Cafe", "HW", "Latte", "Core", "LatteOverlay.cpp")
+    _patch_file(lo, "void LatteOverlay_render(bool pad_view)\n{\n",
+                "void (*g_nl_overlay_hook)(bool pad_view) = nullptr; // Nintendo Land Recomp\n"
+                "void LatteOverlay_render(bool pad_view)\n{\n\tif (g_nl_overlay_hook) g_nl_overlay_hook(pad_view);\n", log)
     fu = os.path.join(cemu_dir, "src", "util", "Fiber", "FiberUnix.cpp")
     if os.path.isfile(fu):
         _patch_file(fu, "const size_t stackSize = 2 * 1024 * 1024;",

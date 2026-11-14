@@ -2,7 +2,7 @@
 # Nutzt Cemus Kern-Bibliotheken (OS, Grafik, Audio, Eingabe) ohne Cemus Oberflaeche.
 set(NL_FRONTEND_DIR ${CMAKE_CURRENT_LIST_DIR})
 
-add_executable(NintendoLand ${NL_FRONTEND_DIR}/main.cpp)
+add_executable(NintendoLand ${NL_FRONTEND_DIR}/main.cpp ${NL_FRONTEND_DIR}/nl_input.cpp ${NL_FRONTEND_DIR}/nl_menu.cpp)
 target_precompile_headers(NintendoLand PRIVATE "${CMAKE_SOURCE_DIR}/src/Common/precompiled.h")
 target_include_directories(NintendoLand PRIVATE ${CMAKE_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/src/gui/interface)
 
@@ -30,7 +30,7 @@ set_target_properties(NintendoLand PROPERTIES
   OUTPUT_NAME "NintendoLand")
 
 target_link_libraries(NintendoLand PRIVATE
-  CemuAudio CemuCafe CemuCommon CemuComponents CemuConfig CemuInput CemuUtil CemuResource
+  CemuAudio CemuCafe CemuCommon CemuComponents CemuConfig CemuInput CemuUtil CemuResource imguiImpl
   SDL3::SDL3)
 if(UNIX AND NOT APPLE)
   target_link_options(NintendoLand PRIVATE -z noexecstack)
