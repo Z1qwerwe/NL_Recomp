@@ -69,6 +69,7 @@ void nl_settings_load(const std::filesystem::path& path) {
         else if (k == "mouse_sens2") n.mouse_sens = std::clamp(v, 10, 1000);
         else if (k == "mouse_invert_y") n.mouse_invert_y = v != 0;
         else if (k == "free_camera") n.free_camera = v != 0;
+        else if (k == "pad_gyro") n.pad_gyro = v != 0;
         else if (k == "stick_camera_speed") n.stick_camera_speed = std::clamp(v, 10, 400);
         else if (k == "button_layout2") n.button_layout = std::clamp(v, 0, 2);
     }
@@ -87,7 +88,7 @@ void nl_settings_save() {
       << "\npad_volume=" << n.pad_volume << "\nmic=" << n.mic << "\nmic_volume=" << n.mic_volume
       << "\nbutton_layout2=" << n.button_layout << "\ndeadzone=" << n.deadzone << "\nscreen_layout=" << n.screen_layout
       << "\npip_size=" << n.pip_size << "\nmouse_camera=" << n.mouse_camera << "\nmouse_sens2=" << n.mouse_sens << "\nmouse_invert_y=" << n.mouse_invert_y << "\nfree_camera=" << n.free_camera
-      << "\nstick_camera_speed=" << n.stick_camera_speed << "\n";
+      << "\nstick_camera_speed=" << n.stick_camera_speed << "\npad_gyro=" << n.pad_gyro << "\n";
     GetConfigHandle().Save();
 }
 
@@ -262,6 +263,9 @@ static std::vector<Row> build_tab(int tab) {
             nl_input_save();
             save_later();
         };
+        rows.push_back(onoff("Controller-Gyro", "Hat dein Controller einen Bewegungssensor (PS5, PS4, Switch Pro ...), "
+                             "neigst du damit das GamePad wie im Original: Controller kippen = zielen und umschauen. "
+                             "Solange der Gyro an ist, uebernimmt er das Neigen statt Maus und rechtem Stick.", &n.pad_gyro, d.pad_gyro));
         rows.push_back(onoff("Freie Kamera (statt Neigen)", "Im Original zielt und schaut man oft, indem man das GamePad neigt. "
                              "Hier uebernehmen Maus und rechter Stick das: hoch, runter, links, rechts. "
                              "Z, mittlere Maustaste oder das Touchpad am Controller zentriert die Kamera wieder.", &n.free_camera, d.free_camera));
@@ -679,6 +683,8 @@ static void render_menu(int w, int h) {
     if (controls) {
         std::string gp = nl_gamepad_name();
         help += "\n\n" + (gp.empty() ? std::string("Kein Controller erkannt.") : "Controller: " + gp);
+        if (!gp.empty())
+            help += nl_pad_has_gyro() ? (nl_pad_gyro_active() ? "\nGyro: aktiv" : "\nGyro: vorhanden, aus") : "\nGyro: keiner";
     }
     {
         ImVec2 tp(help_x0 + 20 * u, list_y0 + 20 * u);

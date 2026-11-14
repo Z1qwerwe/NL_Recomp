@@ -65,6 +65,12 @@ static bool s_menu_btn_last = false;
 // Virtuelles Neigen des GamePads: 0..1 wie Cemus Maus-Gyro (0.5 = gerade)
 extern bool (*g_nl_virtual_gyro)(float& wx, float& wy);
 static std::atomic<float> s_gyro_wx{0.5f}, s_gyro_wy{0.5f};
+bool nl_pad_has_gyro() {
+    std::scoped_lock l(s_pad_mutex);
+    return s_gamepad && s_gamepad->is_connected() && s_gamepad->has_motion();
+}
+bool nl_pad_gyro_active() { return g_nl.pad_gyro && nl_pad_has_gyro(); }
+
 static bool gyro_hook(float& wx, float& wy) {
     if (!g_nl.free_camera || g_nl_menu_open) return false;
     wx = s_gyro_wx;
@@ -306,11 +312,19 @@ public:
         set_axis_settings(AxisSetting(0.0f));       // Totzone macht schon der echte Controller
         set_rotation_settings(AxisSetting(0.0f));
         set_trigger_settings(AxisSetting(0.0f));
+        set_use_motion(true);   // Bewegungsdaten werden genutzt, sobald has_motion() ja sagt
     }
     std::string_view api_name() const override { return "NintendoLand"; }
     InputAPI::Type api() const override { return InputAPI::Keyboard; }
     bool is_connected() override { return true; }
     std::string get_button_name(uint64 button) const override { return "NL " + std::to_string(button); }
+
+    // Echter Gyro vom Controller (PS5/PS4/Switch Pro ...) -> GamePad-Neigen
+    bool has_motion() override { return nl_pad_gyro_active(); }
+    MotionSample get_motion_sample() override {
+        std::scoped_lock l(s_pad_mutex);
+        return s_gamepad ? s_gamepad->get_motion_sample() : MotionSample{};
+    }
 
     // Touchscreen: Maus-Klick auf die GamePad-Flaeche im Fenster
     bool has_position() override {

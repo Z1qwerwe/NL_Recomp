@@ -38,6 +38,7 @@ struct NLSettings {
     bool mouse_invert_y = false; // Maus hoch = nach unten schauen
     bool free_camera = true;     // Maus + rechter Stick simulieren das Neigen des GamePads (freie Kamera)
     int stick_camera_speed = 100;// Prozent, wie schnell der rechte Stick neigt
+    bool pad_gyro = true;        // Gyro des Controllers (PS5, PS4, Switch Pro ...) als GamePad-Neigen benutzen
     int deadzone = 20;           // Prozent
 };
 extern NLSettings g_nl;
@@ -72,6 +73,8 @@ std::string nl_pad_name(int code);
 std::string nl_gamepad_name();         // leer = kein Controller
 enum class NLPadType { None, Nintendo, Xbox, PlayStation, Other };
 NLPadType nl_pad_type();
+bool nl_pad_has_gyro();                 // hat der Controller einen Gyro-Sensor?
+bool nl_pad_gyro_active();              // wird er gerade benutzt?
 bool nl_a_is_bottom();                  // Knopf-Layout: A = unterer Knopf?
 
 // Maus (Fenster-Thread schreibt, Spiel liest)
