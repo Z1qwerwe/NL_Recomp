@@ -69,8 +69,10 @@ static std::atomic<int> s_touch_x{0}, s_touch_y{0};
 
 void nl_mouse_add_delta(int dx, int dy) { s_mouse_dx += dx; s_mouse_dy += dy; }
 void nl_mouse_touch(bool down, int x, int y) { s_touch_x = x; s_touch_y = y; s_touch_down = down; }
+std::atomic<bool> g_nl_mouse_captured{false};
 bool nl_mouse_pointer_mode() {
-    return !g_nl.mouse_camera || g_nl_menu_open || nl_key_down(VK_MENU) || !WindowSystem::GetWindowInfo().app_active;
+    return !g_nl.mouse_camera || !g_nl_mouse_captured || g_nl_menu_open || nl_key_down(VK_MENU) ||
+           !WindowSystem::GetWindowInfo().app_active;
 }
 
 NLPadType nl_pad_type() {
@@ -267,6 +269,27 @@ static float pad_value(const ControllerState& st, int code) {
     return 0.0f;
 }
 
+// Wo ist das GamePad-Bild im Hauptfenster?
+static bool drc_rect_now(int* r) {
+    if (WindowSystem::IsPadWindowOpen()) return false;   // eigenes GamePad-Fenster: Cemu-Weg
+    if (g_nl_screens.mode != 0) {
+        for (int k = 0; k < 4; k++) r[k] = g_nl_screens.drc_rect[k];
+        return r[2] > 0 && r[3] > 0;
+    }
+    if (!LatteGPUState.isDRCPrimary) return false;   // nur TV sichtbar
+    int w = 0, h = 0;
+    WindowSystem::GetWindowPhysSize(w, h);
+    int iw = w, ih = w * 9 / 16;
+    if (ih > h) { ih = h; iw = h * 16 / 9; }
+    r[0] = (w - iw) / 2; r[1] = (h - ih) / 2; r[2] = iw; r[3] = ih;
+    return iw > 0;
+}
+
+bool nl_point_in_drc(int x, int y) {
+    int r[4];
+    return drc_rect_now(r) && x >= r[0] && y >= r[1] && x < r[0] + r[2] && y < r[1] + r[3];
+}
+
 class NLInputController : public ControllerBase {
 public:
     NLInputController() : ControllerBase("nl_input", "Nintendo Land") {
@@ -294,21 +317,7 @@ public:
     }
     glm::vec2 get_prev_position() override { return get_position(); }
 
-    // Wo ist das GamePad-Bild im Hauptfenster?
-    static bool drc_rect(int* r) {
-        if (WindowSystem::IsPadWindowOpen()) return false;   // eigenes GamePad-Fenster: Cemu-Weg
-        if (g_nl_screens.mode != 0) {
-            for (int k = 0; k < 4; k++) r[k] = g_nl_screens.drc_rect[k];
-            return r[2] > 0 && r[3] > 0;
-        }
-        if (!LatteGPUState.isDRCPrimary) return false;   // nur TV sichtbar
-        int w = 0, h = 0;
-        WindowSystem::GetWindowPhysSize(w, h);
-        int iw = w, ih = w * 9 / 16;
-        if (ih > h) { ih = h; iw = h * 16 / 9; }
-        r[0] = (w - iw) / 2; r[1] = (h - ih) / 2; r[2] = iw; r[3] = ih;
-        return iw > 0;
-    }
+    static bool drc_rect(int* r) { return drc_rect_now(r); }
 
     ControllerState raw_state() override {
         ControllerState pad{};

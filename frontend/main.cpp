@@ -232,6 +232,8 @@ static void restart_self() {
 }
 
 // Maus = Touchscreen des GamePads (Positionen in echten Pixeln, wie bei Cemu)
+static void update_cursor();
+
 // Maus: im Hauptfenster entweder Kamera (Zeiger versteckt) oder Zeiger (Touch auf dem GamePad-Bild, Menue)
 static bool s_mouse_left = false;
 static void update_mouse(HWND win, LPARAM lp, std::optional<bool> left, std::optional<bool> right) {
@@ -242,6 +244,12 @@ static void update_mouse(HWND win, LPARAM lp, std::optional<bool> left, std::opt
         std::scoped_lock lock(m.m_mutex);
         m.position = {x, y};
         if (left) { m.left_down = *left; if (*left) m.left_down_toggle = true; }
+        return;
+    }
+    // Klick ins grosse Spielbild (nicht aufs GamePad-Bild) faengt die Maus fuer die Kamera ein
+    if (left && *left && g_nl.mouse_camera && !g_nl_menu_open && !g_nl_mouse_captured && !nl_point_in_drc(x, y)) {
+        g_nl_mouse_captured = true;
+        update_cursor();
         return;
     }
     const bool pointer = nl_mouse_pointer_mode();
@@ -332,7 +340,7 @@ static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         return msg == WM_SIZE ? 0 : DefWindowProcW(hwnd, msg, wp, lp);
     case WM_ACTIVATEAPP:
         g_window_info.app_active = wp != 0;
-        if (!wp) g_window_info.set_keystatesup();
+        if (!wp) { g_window_info.set_keystatesup(); g_nl_mouse_captured = false; }
         update_cursor();
         return 0;
     case WM_SETCURSOR:
@@ -359,6 +367,10 @@ static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         }
         if (wp == VK_F4 && (lp & (1 << 29))) break;   // Alt+F4 normal
+        if (wp == VK_ESCAPE && g_nl_mouse_captured) {      // Esc gibt die Maus frei (und oeffnet das Menue)
+            g_nl_mouse_captured = false;
+            update_cursor();
+        }
         g_window_info.set_keystate((uint32)wp, true);
         return 0;
     case WM_KEYUP:
@@ -402,7 +414,7 @@ static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         const char* view = g_nl_screens.mode ? (LatteGPUState.isDRCPrimary ? "GamePad gross" : "TV gross")
                                              : (LatteGPUState.isDRCPrimary ? "GamePad-Bild" : "TV-Bild");
         std::string t = s_loading ? std::string("Nintendo Land - laedt ...")
-                                  : fmt::format("Nintendo Land - {:.0f} FPS - {}   |   Tab: Bilder tauschen   Alt: Mauszeiger   Esc: Menue",
+                                  : fmt::format("Nintendo Land - {:.0f} FPS - {}   |   Tab: Bilder tauschen   Klick ins Bild: Maus-Kamera   Esc: Maus frei / Menue",
                                                 s_fps.load(), view);
         SetWindowTextW(s_window, boost::nowide::widen(t).c_str());
         return 0;

@@ -74,7 +74,9 @@ bool nl_a_is_bottom();                  // Knopf-Layout: A = unterer Knopf?
 // Maus (Fenster-Thread schreibt, Spiel liest)
 void nl_mouse_add_delta(int dx, int dy);           // relative Bewegung (Maus-Kamera)
 void nl_mouse_touch(bool down, int x, int y);       // Klick/Bewegung in echten Fensterpixeln
-bool nl_mouse_pointer_mode();                       // Zeiger sichtbar (Alt gehalten, Menue offen, ...)
+bool nl_mouse_pointer_mode();                       // Zeiger sichtbar (nicht eingefangen, Alt, Menue offen, ...)
+extern std::atomic<bool> g_nl_mouse_captured;       // Maus fuer die Kamera eingefangen (Klick ins Spielbild)
+bool nl_point_in_drc(int x, int y);                 // liegt der Punkt auf dem GamePad-Bild?
 
 // Rohzustand fuer das Menue (Navigation und Aufnahme)
 struct NLPadSnapshot { bool connected = false; uint64_t buttons = 0; float lx = 0, ly = 0, rx = 0, ry = 0, lt = 0, rt = 0; };

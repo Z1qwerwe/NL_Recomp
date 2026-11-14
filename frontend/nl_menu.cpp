@@ -258,8 +258,8 @@ static std::vector<Row> build_tab(int tab) {
             nl_input_save();
             save_later();
         };
-        rows.push_back(onoff("Maus-Kamera", "Die Maus dreht die Kamera wie der rechte Stick, der Zeiger ist versteckt. "
-                             "Alt gedrueckt halten zeigt den Zeiger - zum Antippen auf dem GamePad-Bild.", &n.mouse_camera, d.mouse_camera));
+        rows.push_back(onoff("Maus-Kamera", "Klick ins grosse Spielbild faengt die Maus ein: dann dreht sie die Kamera wie der rechte Stick und der Zeiger ist weg. "
+                             "Esc oder Alt gibt sie wieder frei. Ein Klick aufs GamePad-Bild ist immer ein Touch.", &n.mouse_camera, d.mouse_camera));
         rows.push_back(percent("Maus-Empfindlichkeit", "Wie schnell sich die Kamera mit der Maus dreht.", &n.mouse_sens, d.mouse_sens, 10, 400, 10));
         rows.push_back(percent("Stick-Totzone", "Wie weit der Stick bewegt werden muss, bevor das Spiel reagiert.", &n.deadzone, d.deadzone, 0, 60, 5));
         rows.push_back(header("Belegung"));
@@ -387,10 +387,37 @@ static void poll_capture() {
 // Zeichnen
 // ===========================================================================
 static ImU32 col(int r, int g, int b, int a = 255) { return IM_COL32(r, g, b, a); }
-static const ImU32 C_PANEL = col(18, 20, 30, 242), C_ROW = col(34, 38, 54, 255), C_ROW_HOT = col(48, 54, 76, 255),
-                   C_SEL = col(255, 255, 255, 255), C_TEXT = col(240, 242, 250), C_DIM = col(150, 156, 178),
-                   C_ACCENT = col(255, 196, 40), C_HELP = col(26, 29, 42, 255);
-static const ImU32 kRainbow[] = {col(230, 60, 60), col(250, 150, 40), col(250, 215, 50), col(80, 190, 90), col(60, 150, 230), col(150, 90, 210)};
+// Wii-U-Look: helles Glas, feines Raster, weisse Kacheln mit Glanz, Cyan als Akzent
+static const ImU32 C_PANEL = col(246, 248, 250, 236), C_ROW = col(255, 255, 255, 240), C_ROW_HOT = col(236, 248, 253, 250),
+                   C_SEL = col(0, 174, 239, 255), C_TEXT = col(62, 66, 74), C_DIM = col(140, 146, 156),
+                   C_ACCENT = col(0, 174, 239), C_HELP = col(236, 240, 244, 235), C_EDGE = col(208, 213, 220),
+                   C_ON_ACCENT = col(255, 255, 255);
+
+// Glas-Kachel: weisse Flaeche, Rand, Glanz oben, weicher Schatten
+static void glass_tile(ImDrawList* dl, ImVec2 a, ImVec2 b, float r, ImU32 fill, ImU32 edge, float u, bool shadow = true) {
+    if (shadow)
+        for (int i = 3; i >= 1; i--)
+            dl->AddRectFilled(ImVec2(a.x - i * u, a.y + (i + 1) * u), ImVec2(b.x + i * u, b.y + (i + 2) * u), IM_COL32(40, 60, 90, 10), r + i * u);
+    dl->AddRectFilled(a, b, fill, r);
+    dl->AddRectFilled(ImVec2(a.x + 2 * u, a.y + 2 * u), ImVec2(b.x - 2 * u, a.y + (b.y - a.y) * 0.48f), IM_COL32(255, 255, 255, 70), r);
+    dl->AddRect(a, b, edge, r, 0, 1.5f * u);
+}
+// Akzent-Pille (aktiver Reiter, fokussierter Knopf): Cyan mit Verlauf und Glanz
+static void accent_pill(ImDrawList* dl, ImVec2 a, ImVec2 b, float r, float u) {
+    dl->AddRectFilled(ImVec2(a.x, a.y + 3 * u), ImVec2(b.x, b.y + 3 * u), IM_COL32(0, 120, 170, 60), r);
+    dl->AddRectFilled(a, b, IM_COL32(0, 168, 232, 255), r);
+    dl->AddRectFilled(ImVec2(a.x + 2 * u, a.y + 2 * u), ImVec2(b.x - 2 * u, a.y + (b.y - a.y) * 0.5f), IM_COL32(255, 255, 255, 60), r);
+    dl->AddRect(a, b, IM_COL32(0, 140, 200, 255), r, 0, 1.5f * u);
+}
+// runder Pfeil-Knopf wie im Wii-U-Menue
+static void round_arrow(ImDrawList* dl, ImVec2 c, float rad, bool right, bool hot) {
+    dl->AddCircleFilled(c, rad, hot ? IM_COL32(0, 174, 239, 255) : IM_COL32(232, 236, 241, 255), 24);
+    dl->AddCircle(c, rad, hot ? IM_COL32(0, 140, 200, 255) : IM_COL32(205, 210, 217, 255), 24, 1.5f);
+    ImU32 t = hot ? IM_COL32(255, 255, 255, 255) : IM_COL32(110, 116, 126, 255);
+    float s = rad * 0.75f;
+    if (right) dl->AddTriangleFilled(ImVec2(c.x - s * 0.35f, c.y - s * 0.55f), ImVec2(c.x - s * 0.35f, c.y + s * 0.55f), ImVec2(c.x + s * 0.55f, c.y), t);
+    else dl->AddTriangleFilled(ImVec2(c.x + s * 0.35f, c.y - s * 0.55f), ImVec2(c.x + s * 0.35f, c.y + s * 0.55f), ImVec2(c.x - s * 0.55f, c.y), t);
+}
 
 static void text_at(ImDrawList* dl, ImFont* f, float size, ImVec2 p, ImU32 c, const std::string& t) {
     dl->AddText(f, size, p, c, t.c_str());
@@ -492,20 +519,35 @@ static void render_menu(int w, int h) {
     ImGui::Begin("##nl_menu", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoNav |
                                             ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoFocusOnAppearing);
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    dl->AddRectFilled(ImVec2(0, 0), ImVec2((float)w, (float)h), col(0, 0, 0, 120));
+    dl->AddRectFilledMultiColor(ImVec2(0, 0), ImVec2((float)w, (float)h), col(220, 228, 236, 150), col(220, 228, 236, 150),
+                                col(150, 165, 180, 170), col(150, 165, 180, 170));
 
     const float pw = 1400 * u, ph = 800 * u;
     const ImVec2 p0((w - pw) / 2, (h - ph) / 2), p1(p0.x + pw, p0.y + ph);
-    dl->AddRectFilled(p0, p1, C_PANEL, 18 * u);
-    // Regenbogen-Streifen oben (Nintendo-Land-Farben)
-    const float stripe = 8 * u, seg = (pw - 36 * u) / 6;
-    for (int i = 0; i < 6; i++)
-        dl->AddRectFilled(ImVec2(p0.x + 18 * u + i * seg, p0.y + 10 * u), ImVec2(p0.x + 18 * u + (i + 1) * seg, p0.y + 10 * u + stripe), kRainbow[i],
-                          i == 0 || i == 5 ? 4 * u : 0);
+    // Panel: Schatten, Glas, feines Raster wie im Wii-U-Menue, weisser Rand
+    for (int i = 6; i >= 1; i--)
+        dl->AddRectFilled(ImVec2(p0.x - i * 3 * u, p0.y + i * 2 * u), ImVec2(p1.x + i * 3 * u, p1.y + i * 4 * u), col(30, 50, 80, 9), (28 + i * 3) * u);
+    dl->AddRectFilled(p0, p1, C_PANEL, 28 * u);
+    dl->PushClipRect(ImVec2(p0.x + 14 * u, p0.y + 14 * u), ImVec2(p1.x - 14 * u, p1.y - 14 * u), true);
+    for (float gx = p0.x; gx < p1.x; gx += 26 * u) dl->AddLine(ImVec2(gx, p0.y), ImVec2(gx, p1.y), col(170, 180, 192, 22), 1.0f);
+    for (float gy = p0.y; gy < p1.y; gy += 26 * u) dl->AddLine(ImVec2(p0.x, gy), ImVec2(p1.x, gy), col(170, 180, 192, 22), 1.0f);
+    dl->PopClipRect();
+    dl->AddRectFilled(ImVec2(p0.x + 4 * u, p0.y + 4 * u), ImVec2(p1.x - 4 * u, p0.y + 120 * u), col(255, 255, 255, 90), 26 * u);
+    dl->AddRect(p0, p1, col(255, 255, 255, 255), 28 * u, 0, 4 * u);
+    dl->AddRect(ImVec2(p0.x - 1 * u, p0.y - 1 * u), ImVec2(p1.x + 1 * u, p1.y + 1 * u), C_EDGE, 29 * u, 0, 1.0f * u);
 
     const float pad = 36 * u;
-    text_at(dl, f_big, fs_big, ImVec2(p0.x + pad, p0.y + 32 * u), C_ACCENT, "Nintendo Land");
-    float tx = p0.x + pad + measure(f_big, fs_big, "Nintendo Land").x + 14 * u;
+    // kleines rundes Logo wie das Mii-Bild oben links im Wii-U-Menue
+    {
+        ImVec2 lc(p0.x + pad + 20 * u, p0.y + 50 * u);
+        const ImU32 ring[] = {col(230, 60, 60), col(250, 150, 40), col(250, 215, 50), col(80, 190, 90), col(60, 150, 230), col(150, 90, 210)};
+        for (int i = 0; i < 6; i++)
+            dl->PathArcTo(lc, 19 * u, -1.5708f + i * 1.0472f, -1.5708f + (i + 1) * 1.0472f, 8), dl->PathLineTo(lc), dl->PathFillConvex(ring[i]);
+        dl->AddCircleFilled(lc, 11 * u, col(255, 255, 255), 24);
+    }
+    const float title_x = p0.x + pad + 50 * u;
+    text_at(dl, f_big, fs_big, ImVec2(title_x, p0.y + 32 * u), C_ACCENT, "Nintendo Land");
+    float tx = title_x + measure(f_big, fs_big, "Nintendo Land").x + 14 * u;
     text_at(dl, f_big, fs_big, ImVec2(tx, p0.y + 32 * u), C_TEXT, "|  Einstellungen");
     std::string ver = "NL Recomp 0.2";
     text_at(dl, f_small, fs_small, ImVec2(p1.x - pad - measure(f_small, fs_small, ver).x, p0.y + 42 * u), C_DIM, ver);
@@ -518,8 +560,9 @@ static void render_menu(int w, int h) {
         float tw = measure(f, fs, tabs[i]).x + 44 * u;
         ImVec2 a(tab_x, tab_y), b(tab_x + tw, tab_y + tab_h);
         bool active = i == s_tab;
-        dl->AddRectFilled(a, b, active ? kRainbow[i + 1] : (hit(a, b) ? C_ROW_HOT : C_ROW), tab_h / 2);
-        text_center(dl, f, fs, a, b, active ? col(20, 20, 28) : C_TEXT, tabs[i]);
+        if (active) accent_pill(dl, a, b, tab_h / 2, u);
+        else glass_tile(dl, a, b, tab_h / 2, hit(a, b) ? C_ROW_HOT : C_ROW, C_EDGE, u);
+        text_center(dl, f, fs, a, b, active ? C_ON_ACCENT : C_TEXT, tabs[i]);
         if (clicked(a, b)) { s_tab = i; s_sel = 0; s_scroll = 0; s_bottom = -1; }
         tab_x += tw + 12 * u;
     }
@@ -529,7 +572,7 @@ static void render_menu(int w, int h) {
     const float list_x0 = p0.x + pad, list_x1 = p0.x + pw * 0.62f;
     const float list_y0 = tab_y + tab_h + 24 * u, list_y1 = p1.y - 96 * u;
     const float help_x0 = list_x1 + 24 * u, help_x1 = p1.x - pad;
-    dl->AddRectFilled(ImVec2(help_x0, list_y0), ImVec2(help_x1, list_y1), C_HELP, 12 * u);
+    glass_tile(dl, ImVec2(help_x0, list_y0), ImVec2(help_x1, list_y1), 18 * u, C_HELP, C_EDGE, u, false);
 
     const float row_h = 54 * u, gap = 8 * u;
     const bool controls = s_tab == 3;
@@ -562,8 +605,11 @@ static void render_menu(int w, int h) {
             continue;
         }
         const bool sel = i == s_sel && s_bottom < 0;
-        dl->AddRectFilled(a, b, hit(a, b) ? C_ROW_HOT : C_ROW, 10 * u);
-        if (sel && r.action < 0) dl->AddRect(a, b, C_SEL, 10 * u, 0, 3 * u);
+        glass_tile(dl, a, b, 14 * u, hit(a, b) ? C_ROW_HOT : C_ROW, C_EDGE, u);
+        if (sel && r.action < 0) {
+            dl->AddRect(ImVec2(a.x - 3 * u, a.y - 3 * u), ImVec2(b.x + 3 * u, b.y + 3 * u), col(0, 174, 239, 70), 17 * u, 0, 4 * u);
+            dl->AddRect(a, b, C_SEL, 14 * u, 0, 2.5f * u);
+        }
         text_at(dl, f, fs, ImVec2(a.x + 20 * u, y + (row_h - fs) / 2), C_TEXT, r.label);
         if (r.action >= 0) {
             const auto& bind = nl_binding(r.action);
@@ -571,13 +617,17 @@ static void render_menu(int w, int h) {
                 ImVec2 ca(cells_x + c * (cell_w + 8 * u), y + 6 * u), cb(ca.x + cell_w, y + row_h - 6 * u);
                 bool cs = sel && s_col == c;
                 bool capturing = s_capture_action == r.action && s_capture_col == c;
-                dl->AddRectFilled(ca, cb, capturing ? C_ACCENT : (hit(ca, cb) ? C_ROW_HOT : col(24, 27, 40)), 8 * u);
-                if (cs) dl->AddRect(ca, cb, C_SEL, 8 * u, 0, 3 * u);
+                if (capturing) accent_pill(dl, ca, cb, 10 * u, u);
+                else {
+                    dl->AddRectFilled(ca, cb, hit(ca, cb) ? C_ROW_HOT : col(242, 245, 248), 10 * u);
+                    dl->AddRect(ca, cb, C_EDGE, 10 * u, 0, 1.2f * u);
+                }
+                if (cs) dl->AddRect(ImVec2(ca.x - 2 * u, ca.y - 2 * u), ImVec2(cb.x + 2 * u, cb.y + 2 * u), C_SEL, 12 * u, 0, 2.5f * u);
                 std::string t = capturing ? (c < 2 ? "Taste druecken ..." : "Knopf druecken ...")
                                           : (c == 0 ? nl_key_name(bind.key1) : c == 1 ? nl_key_name(bind.key2) : nl_pad_name(bind.pad));
                 ImFont* cf = measure(f, fs, t).x > cell_w - 12 * u ? f_small : f;
                 float cfs = cf == f ? fs : fs_small;
-                text_center(dl, cf, cfs, ca, cb, capturing ? col(20, 20, 28) : C_TEXT, t);
+                text_center(dl, cf, cfs, ca, cb, capturing ? C_ON_ACCENT : C_TEXT, t);
                 if (clicked(ca, cb) && s_capture_action < 0) { s_sel = i; s_col = c; s_bottom = -1; start_capture(r.action, c); }
             }
         } else {
@@ -589,8 +639,9 @@ static void render_menu(int w, int h) {
             if (r.is_default()) text_center(dl, f_small, fs_small, ImVec2(vx0, cy + fs / 2 - 2 * u), ImVec2(vx1, cy + fs / 2 + fs_small), C_DIM, "Standard");
             const float as = 14 * u;
             ImVec2 la(vx0, y), lb(vx0 + 40 * u, y + row_h), ra(vx1 - 40 * u, y), rb(vx1, y + row_h);
-            arrow(dl, ImVec2(vx0 + 18 * u, y + row_h / 2), as, false, hit(la, lb) ? C_ACCENT : C_DIM);
-            arrow(dl, ImVec2(vx1 - 18 * u, y + row_h / 2), as, true, hit(ra, rb) ? C_ACCENT : C_DIM);
+            (void)as;
+            round_arrow(dl, ImVec2(vx0 + 18 * u, y + row_h / 2), 15 * u, false, hit(la, lb) || sel);
+            round_arrow(dl, ImVec2(vx1 - 18 * u, y + row_h / 2), 15 * u, true, hit(ra, rb) || sel);
             if (clicked(la, lb)) { s_sel = i; r.change(-1); }
             else if (clicked(ra, rb) || (clicked(a, b) && !hit(la, lb))) { s_sel = i; r.change(+1); }
             if (r.restart) text_at(dl, f_small, fs_small, ImVec2(a.x + 20 * u + measure(f, fs, r.label).x + 12 * u, y + (row_h - fs_small) / 2 + 2 * u),
@@ -638,8 +689,9 @@ static void render_menu(int w, int h) {
     for (int i = 0; i < 3; i++) {
         ImVec2 a(p1.x - pad - (3 - i) * (bw + 14 * u) + 14 * u, p1.y - 76 * u), b(a.x + bw, a.y + bh);
         bool focus = s_bottom == i;
-        dl->AddRectFilled(a, b, focus ? C_ACCENT : (hit(a, b) ? C_ROW_HOT : C_ROW), bh / 2);
-        text_center(dl, f, fs, a, b, focus ? col(20, 20, 28) : C_TEXT, btns[i]);
+        if (focus) accent_pill(dl, a, b, bh / 2, u);
+        else glass_tile(dl, a, b, bh / 2, hit(a, b) ? C_ROW_HOT : C_ROW, C_EDGE, u);
+        text_center(dl, f, fs, a, b, focus ? C_ON_ACCENT : C_TEXT, btns[i]);
         bool press = clicked(a, b) || (focus && in[N_OK]);
         if (press) {
             if (i == 0) nl_menu_toggle();
