@@ -13,10 +13,10 @@ static uint32_t g_vpad_prev = 0;
 
 // int32 VPADRead(chan, VPADStatus* buffers, count, VPADReadError* err)
 static void h_VPADRead(PPCContext& c) {
-    uint32_t out = c.r[4], count = c.r[5], err = c.r[6];
-    if (c.r[3] != 0 || !count) {
+    uint32_t out = c.gpr[4], count = c.gpr[5], err = c.gpr[6];
+    if (c.gpr[3] != 0 || !count) {
         if (err) st32(err, (uint32_t)-2);   // VPAD_READ_INVALID_CONTROLLER
-        c.r[3] = 0;
+        c.gpr[3] = 0;
         return;
     }
     VpadState v = platform_vpad();
@@ -41,12 +41,12 @@ static void h_VPADRead(PPCContext& c) {
     st8(out + 0xA0, 0xFF);   // Lautstaerke-Regler
     st8(out + 0xA1, 0xC0);   // Akku
     if (err) st32(err, 0);
-    c.r[3] = 1;
+    c.gpr[3] = 1;
 }
 
 // VPADGetTPCalibratedPoint(chan, VPADTouchData* out, const VPADTouchData* in)  -> 1280x720
 static void h_VPADGetTPCalibratedPoint(PPCContext& c) {
-    uint32_t out = c.r[4], in = c.r[5];
+    uint32_t out = c.gpr[4], in = c.gpr[5];
     uint32_t x = ld16(in), y = ld16(in + 2);
     st16(out + 0, x * 1280 / 4096);
     st16(out + 2, y * 720 / 4096);
@@ -59,20 +59,20 @@ static uint32_t g_kpad_prev[4] = {0, 0, 0, 0};
 
 // int32 WPADProbe(chan, u32* type) -> 0 = verbunden, -1 = keiner
 static void h_WPADProbe(PPCContext& c) {
-    WiimoteState w = platform_wiimote((int)c.r[3]);
-    if (!w.connected) { c.r[3] = (uint32_t)-1; return; }
-    if (c.r[4]) st32(c.r[4], w.nunchuk ? 1 : 0);   // WPAD_EXT_CORE / NUNCHUK
-    c.r[3] = 0;
+    WiimoteState w = platform_wiimote((int)c.gpr[3]);
+    if (!w.connected) { c.gpr[3] = (uint32_t)-1; return; }
+    if (c.gpr[4]) st32(c.gpr[4], w.nunchuk ? 1 : 0);   // WPAD_EXT_CORE / NUNCHUK
+    c.gpr[3] = 0;
 }
 
 // int32 KPADReadEx(chan, KPADStatus* data, size, KPADError* err)
 static void h_KPADReadEx(PPCContext& c) {
-    int ch = (int)c.r[3];
-    uint32_t out = c.r[4], count = c.r[5], err = c.r[6];
+    int ch = (int)c.gpr[3];
+    uint32_t out = c.gpr[4], count = c.gpr[5], err = c.gpr[6];
     WiimoteState w = platform_wiimote(ch);
     if (!w.connected || !count || ch < 0 || ch > 3) {
         if (err) st32(err, (uint32_t)-2);   // KPAD_ERROR_INVALID_CONTROLLER
-        c.r[3] = 0;
+        c.gpr[3] = 0;
         return;
     }
     memset(g_base + out, 0, 0xF0);
@@ -93,13 +93,13 @@ static void h_KPADReadEx(PPCContext& c) {
         stf(out + 0x60, w.nx); stf(out + 0x64, w.ny);                 // Nunchuk-Stick
     }
     if (err) st32(err, 0);
-    c.r[3] = 1;
+    c.gpr[3] = 1;
 }
 
-static void h_KPADGetMplsWorkSize(PPCContext& c) { c.r[3] = 0x5FE0; }
-static void h_WPADGetBatteryLevel(PPCContext& c) { c.r[3] = 4; }
-static void h_ret0(PPCContext& c) { c.r[3] = 0; }
-static void h_ret1(PPCContext& c) { c.r[3] = 1; }
+static void h_KPADGetMplsWorkSize(PPCContext& c) { c.gpr[3] = 0x5FE0; }
+static void h_WPADGetBatteryLevel(PPCContext& c) { c.gpr[3] = 4; }
+static void h_ret0(PPCContext& c) { c.gpr[3] = 0; }
+static void h_ret1(PPCContext& c) { c.gpr[3] = 1; }
 static void h_nop(PPCContext&) {}
 
 // --- Mikrofon (GamePad) -------------------------------------------------------
@@ -108,21 +108,21 @@ static uint32_t g_mic_buf = 0, g_mic_size = 0, g_mic_write = 0, g_mic_avail = 0;
 static bool g_mic_open = false;
 
 static void h_MICInit(PPCContext& c) {
-    uint32_t wm = c.r[5];
+    uint32_t wm = c.gpr[5];
     if (wm) {
         g_mic_size = ld32(wm + 0);
         g_mic_buf = ld32(wm + 4);
     }
-    if (c.r[6]) st32(c.r[6], 0);
+    if (c.gpr[6]) st32(c.gpr[6], 0);
     printf("[Mikro] MICInit: Puffer 0x%08X, %u Bytes\n", g_mic_buf, g_mic_size);
-    c.r[3] = 1;   // Handle
+    c.gpr[3] = 1;   // Handle
 }
 static void h_MICOpen(PPCContext& c) {
     g_mic_open = platform_mic_start();
     g_mic_write = g_mic_avail = 0;
-    c.r[3] = 0;
+    c.gpr[3] = 0;
 }
-static void h_MICClose(PPCContext& c) { platform_mic_stop(); g_mic_open = false; c.r[3] = 0; }
+static void h_MICClose(PPCContext& c) { platform_mic_stop(); g_mic_open = false; c.gpr[3] = 0; }
 
 // Neue Samples vom PC-Mikrofon in den Ringpuffer des Spiels schreiben (Big-Endian 16 bit)
 static void mic_pump() {
@@ -140,24 +140,24 @@ static void mic_pump() {
 // MICGetStatus(handle, MICStatus* {u32 state; u32 available; u32 readPos})
 static void h_MICGetStatus(PPCContext& c) {
     mic_pump();
-    uint32_t st = c.r[4];
+    uint32_t st = c.gpr[4];
     uint32_t samples = g_mic_size / 2 ? g_mic_size / 2 : 1;
     if (st) {
         st32(st + 0, g_mic_open ? 1 : 0);
         st32(st + 4, g_mic_avail);
         st32(st + 8, (g_mic_write + samples - g_mic_avail) % samples);
     }
-    c.r[3] = 0;
+    c.gpr[3] = 0;
 }
 // MICSetDataConsumed(handle, samples)
 static void h_MICSetDataConsumed(PPCContext& c) {
-    g_mic_avail = c.r[4] > g_mic_avail ? 0 : g_mic_avail - c.r[4];
-    c.r[3] = 0;
+    g_mic_avail = c.gpr[4] > g_mic_avail ? 0 : g_mic_avail - c.gpr[4];
+    c.gpr[3] = 0;
 }
 
 // --- ProcUI ---------------------------------------------------------------------
 // Das Spiel ist immer im Vordergrund
-static void h_ProcUIProcessMessages(PPCContext& c) { c.r[3] = 0; }   // PROCUI_STATUS_IN_FOREGROUND
+static void h_ProcUIProcessMessages(PPCContext& c) { c.gpr[3] = 0; }   // PROCUI_STATUS_IN_FOREGROUND
 
 void input_register(void (*reg)(const char*, const char*, void (*)(PPCContext&))) {
     reg("vpad", "VPADRead", h_VPADRead);

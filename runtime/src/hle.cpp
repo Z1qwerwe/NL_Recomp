@@ -52,8 +52,8 @@ static std::string gstr(uint32_t a) {
     return s;
 }
 
-static void ret(PPCContext& c, uint32_t v) { c.r[3] = v; }
-static void ret64(PPCContext& c, uint64_t v) { c.r[3] = (uint32_t)(v >> 32); c.r[4] = (uint32_t)v; }
+static void ret(PPCContext& c, uint32_t v) { c.gpr[3] = v; }
+static void ret64(PPCContext& c, uint64_t v) { c.gpr[3] = (uint32_t)(v >> 32); c.gpr[4] = (uint32_t)v; }
 
 // printf im Gast-Format: Argumente kommen aus r4..r10 und f1..f8
 static std::string guest_format(PPCContext& c, uint32_t fmt_addr, int first_gpr) {
@@ -67,10 +67,10 @@ static std::string guest_format(PPCContext& c, uint32_t fmt_addr, int first_gpr)
         if (j >= fmt.size()) break;
         std::string spec = fmt.substr(i, j - i + 1);
         char t = fmt[j];
-        uint32_t arg = gpr <= 10 ? c.r[gpr] : 0;
+        uint32_t arg = gpr <= 10 ? c.gpr[gpr] : 0;
         if (t == '%') out.push_back('%');
         else if (t == 's') { snprintf(buf, sizeof buf, spec.c_str(), gstr(arg).c_str()); out += buf; gpr++; }
-        else if (strchr("fFeEgG", t)) { snprintf(buf, sizeof buf, spec.c_str(), c.f[fpr++]); out += buf; }
+        else if (strchr("fFeEgG", t)) { snprintf(buf, sizeof buf, spec.c_str(), c.fpr[fpr++].fp0); out += buf; }
         else {
             std::string s2;
             for (char ch : spec) if (ch != 'l' && ch != 'h' && ch != 'z') s2.push_back(ch);
@@ -82,20 +82,20 @@ static std::string guest_format(PPCContext& c, uint32_t fmt_addr, int first_gpr)
 }
 
 // --- coreinit ----------------------------------------------------------------
-static void h_memcpy(PPCContext& c) { memmove(g_base + c.r[3], g_base + c.r[4], c.r[5]); }
-static void h_memset(PPCContext& c) { memset(g_base + c.r[3], (int)c.r[4], c.r[5]); }
-static void h_OSReport(PPCContext& c) { printf("[Spiel] %s", guest_format(c, c.r[3], 4).c_str()); fflush(stdout); }
-static void h_OSConsoleWrite(PPCContext& c) { fwrite(g_base + c.r[3], 1, c.r[4], stdout); }
+static void h_memcpy(PPCContext& c) { memmove(g_base + c.gpr[3], g_base + c.gpr[4], c.gpr[5]); }
+static void h_memset(PPCContext& c) { memset(g_base + c.gpr[3], (int)c.gpr[4], c.gpr[5]); }
+static void h_OSReport(PPCContext& c) { printf("[Spiel] %s", guest_format(c, c.gpr[3], 4).c_str()); fflush(stdout); }
+static void h_OSConsoleWrite(PPCContext& c) { fwrite(g_base + c.gpr[3], 1, c.gpr[4], stdout); }
 static void h_OSPanic(PPCContext& c) {
-    fprintf(stderr, "[Spiel] PANIC %s:%u: %s\n", gstr(c.r[3]).c_str(), c.r[4],
-            guest_format(c, c.r[5], 6).c_str());
+    fprintf(stderr, "[Spiel] PANIC %s:%u: %s\n", gstr(c.gpr[3]).c_str(), c.gpr[4],
+            guest_format(c, c.gpr[5], 6).c_str());
     hle_report();
     exit(5);
 }
 static void h_exit(PPCContext& c) {
-    printf("[Spiel] exit(%d)\n", (int32_t)c.r[3]);
+    printf("[Spiel] exit(%d)\n", (int32_t)c.gpr[3]);
     hle_report();
-    exit((int)c.r[3]);
+    exit((int)c.gpr[3]);
 }
 
 static uint64_t tb_now() { return ((uint64_t)ppc_mftb(269) << 32) | ppc_mftb(268); }
@@ -106,31 +106,31 @@ static void h_nop(PPCContext&) {}
 
 
 // Heaps: fuer den Anfang ein einfacher Bump-Allokator
-static void h_MEMCreateHeap(PPCContext& c) { ret(c, c.r[3] ? c.r[3] : hle_alloc(0x40, 4)); }
+static void h_MEMCreateHeap(PPCContext& c) { ret(c, c.gpr[3] ? c.gpr[3] : hle_alloc(0x40, 4)); }
 static void h_MEMAllocFromHeapEx(PPCContext& c) {
-    int32_t align = (int32_t)c.r[5];
-    ret(c, hle_alloc(c.r[4], (uint32_t)(align < 0 ? -align : align)));
+    int32_t align = (int32_t)c.gpr[5];
+    ret(c, hle_alloc(c.gpr[4], (uint32_t)(align < 0 ? -align : align)));
 }
 static void h_MEMGetAllocatableSize(PPCContext& c) { ret(c, g_heap_end - g_heap_ptr - 0x1000); }
-static void h_MEMGetBaseHeapHandle(PPCContext& c) { ret(c, 0x7F000000u + c.r[3]); }
-static void h_DefaultAlloc(PPCContext& c) { ret(c, hle_alloc(c.r[3], 32)); }
+static void h_MEMGetBaseHeapHandle(PPCContext& c) { ret(c, 0x7F000000u + c.gpr[3]); }
+static void h_DefaultAlloc(PPCContext& c) { ret(c, hle_alloc(c.gpr[3], 32)); }
 static void h_DefaultAllocEx(PPCContext& c) {
-    int32_t align = (int32_t)c.r[4];
-    ret(c, hle_alloc(c.r[3], (uint32_t)(align < 0 ? -align : align)));
+    int32_t align = (int32_t)c.gpr[4];
+    ret(c, hle_alloc(c.gpr[3], (uint32_t)(align < 0 ? -align : align)));
 }
 
 // Dynamisches Laden: OSDynLoad_FindExport liefert eine Fake-Adresse
 static int slot_for(const std::string& key);
 static void h_OSDynLoad_Acquire(PPCContext& c) {
-    std::string lib = gstr(c.r[3]);
-    if (c.r[4]) st32(c.r[4], 0x7E000000u + (uint32_t)std::hash<std::string>{}(lib) % 0x1000);
+    std::string lib = gstr(c.gpr[3]);
+    if (c.gpr[4]) st32(c.gpr[4], 0x7E000000u + (uint32_t)std::hash<std::string>{}(lib) % 0x1000);
     if (g_trace) printf("[HLE] OSDynLoad_Acquire(%s)\n", lib.c_str());
     ret(c, 0);
 }
 static void h_OSDynLoad_FindExport(PPCContext& c) {
-    std::string name = gstr(c.r[5]);
+    std::string name = gstr(c.gpr[5]);
     int s = slot_for("dyn::" + name);
-    if (c.r[6]) st32(c.r[6], FAKE_BASE + s * 4);
+    if (c.gpr[6]) st32(c.gpr[6], FAKE_BASE + s * 4);
     if (g_trace) printf("[HLE] OSDynLoad_FindExport(%s)\n", name.c_str());
     ret(c, 0);
 }
@@ -155,7 +155,7 @@ static void register_all() {
                           "__ghs_funlock_file", "OSBlockThreadsOnExit", "OSDynLoad_SetAllocator"})
         reg(ci, n, h_nop);
     reg(ci, "DCZeroRange", h_memset);  // r3=addr, r4=size -> unten korrigiert
-    g_impl["coreinit::DCZeroRange"] = [](PPCContext& c) { memset(g_base + c.r[3], 0, c.r[4]); };
+    g_impl["coreinit::DCZeroRange"] = [](PPCContext& c) { memset(g_base + c.gpr[3], 0, c.gpr[4]); };
     reg(ci, "MEMCreateExpHeapEx", h_MEMCreateHeap); reg(ci, "MEMCreateFrmHeapEx", h_MEMCreateHeap);
     reg(ci, "MEMAllocFromExpHeapEx", h_MEMAllocFromHeapEx);
     reg(ci, "MEMAllocFromFrmHeapEx", h_MEMAllocFromHeapEx);
@@ -213,7 +213,7 @@ void hle_init(PPCContext& c) {
 static void dispatch(PPCContext& c, int slot) {
     auto& [name, fn] = g_slots[slot];
     g_calls[name]++;
-    if (g_trace) printf("[HLE] %s(0x%X, 0x%X, 0x%X) LR=0x%08X\n", name.c_str(), c.r[3], c.r[4], c.r[5], c.lr);
+    if (g_trace) printf("[HLE] %s(0x%X, 0x%X, 0x%X) LR=0x%08X\n", name.c_str(), c.gpr[3], c.gpr[4], c.gpr[5], c.spr.LR);
     static const char* dump_on = getenv("NL_DUMP_ON");
     if (dump_on && name.find(dump_on) != std::string::npos) {
         nl_dump_trace(name.c_str());
@@ -224,11 +224,11 @@ static void dispatch(PPCContext& c, int slot) {
     }
     if (fn) { fn(c); return; }
     if (g_missing.insert(name).second)
-        printf("[HLE] fehlt: %s  (r3=0x%X r4=0x%X, LR=0x%08X)\n", name.c_str(), c.r[3], c.r[4], c.lr);
-    c.r[3] = 0;
+        printf("[HLE] fehlt: %s  (r3=0x%X r4=0x%X, LR=0x%08X)\n", name.c_str(), c.gpr[3], c.gpr[4], c.spr.LR);
+    c.gpr[3] = 0;
 }
 
-void hle_call(PPCContext& c, uint32_t import_addr) {
+void hle_call(PPCContext& c, uint32_t import_addr, uint32_t) {
     auto it = g_import_slot.find(import_addr);
     if (it == g_import_slot.end()) {
         fprintf(stderr, "[HLE] Unbekannte Import-Adresse 0x%08X\n", import_addr);

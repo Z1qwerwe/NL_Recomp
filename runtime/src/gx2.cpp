@@ -51,7 +51,7 @@ static uint32_t align_up(uint32_t v, uint32_t a) { return (v + a - 1) / a * a; }
 
 // GX2CalcSurfaceSizeAndAlignment(GX2Surface*)
 static void h_GX2CalcSurfaceSizeAndAlignment(PPCContext& c) {
-    uint32_t s = c.r[3];
+    uint32_t s = c.gpr[3];
     uint32_t w = std::max(1u, ld32(s + SURF_W)), h = std::max(1u, ld32(s + SURF_H));
     uint32_t depth = std::max(1u, ld32(s + SURF_DEPTH)), mips = std::max(1u, ld32(s + SURF_MIPS));
     uint32_t fmt = ld32(s + SURF_FORMAT), tile = ld32(s + SURF_TILEMODE);
@@ -95,16 +95,16 @@ static void tv_size(uint32_t mode, int& w, int& h) {
 // GX2CalcTVSize(mode, format, buffering, u32* size, BOOL* scaleNeeded)
 static void h_GX2CalcTVSize(PPCContext& c) {
     int w, h;
-    tv_size(c.r[3], w, h);
-    uint32_t bufs = c.r[5] ? c.r[5] : 2;
-    if (c.r[6]) st32(c.r[6], align_up((uint32_t)(w * h * 4), 0x1000) * bufs);
-    if (c.r[7]) st32(c.r[7], 0);
+    tv_size(c.gpr[3], w, h);
+    uint32_t bufs = c.gpr[5] ? c.gpr[5] : 2;
+    if (c.gpr[6]) st32(c.gpr[6], align_up((uint32_t)(w * h * 4), 0x1000) * bufs);
+    if (c.gpr[7]) st32(c.gpr[7], 0);
 }
 // GX2CalcDRCSize(mode, format, buffering, u32* size, BOOL* scaleNeeded)
 static void h_GX2CalcDRCSize(PPCContext& c) {
-    uint32_t bufs = c.r[5] ? c.r[5] : 2;
-    if (c.r[6]) st32(c.r[6], align_up(854 * 480 * 4, 0x1000) * bufs);
-    if (c.r[7]) st32(c.r[7], 0);
+    uint32_t bufs = c.gpr[5] ? c.gpr[5] : 2;
+    if (c.gpr[6]) st32(c.gpr[6], align_up(854 * 480 * 4, 0x1000) * bufs);
+    if (c.gpr[7]) st32(c.gpr[7], 0);
 }
 
 static void fill_surface(uint32_t surf, float r, float g, float b, float a) {
@@ -120,17 +120,17 @@ static void fill_surface(uint32_t surf, float r, float g, float b, float a) {
 }
 
 // GX2ClearColor(GX2ColorBuffer*, r, g, b, a)  -- Farben in f1..f4
-static void h_GX2ClearColor(PPCContext& c) { fill_surface(c.r[3], (float)c.f[1], (float)c.f[2], (float)c.f[3], (float)c.f[4]); }
+static void h_GX2ClearColor(PPCContext& c) { fill_surface(c.gpr[3], (float)c.fpr[1].fp0, (float)c.fpr[2].fp0, (float)c.fpr[3].fp0, (float)c.fpr[4].fp0); }
 
 // GX2ClearBuffersEx(cb, db, r, g, b, a, depth, stencil, flags)
 static void h_GX2ClearBuffersEx(PPCContext& c) {
-    if (c.r[3]) fill_surface(c.r[3], (float)c.f[1], (float)c.f[2], (float)c.f[3], (float)c.f[4]);
+    if (c.gpr[3]) fill_surface(c.gpr[3], (float)c.fpr[1].fp0, (float)c.fpr[2].fp0, (float)c.fpr[3].fp0, (float)c.fpr[4].fp0);
 }
 
 // GX2CopyColorBufferToScanBuffer(GX2ColorBuffer*, target) -- target 1 = TV, 4 = DRC
 static void h_GX2CopyColorBufferToScanBuffer(PPCContext& c) {
-    uint32_t cb = c.r[3];
-    int t = c.r[4] == 4 ? TARGET_DRC : TARGET_TV;
+    uint32_t cb = c.gpr[3];
+    int t = c.gpr[4] == 4 ? TARGET_DRC : TARGET_TV;
     uint32_t w = ld32(cb + SURF_W), h = ld32(cb + SURF_H);
     uint32_t img = ld32(cb + SURF_IMAGE), pitch = ld32(cb + SURF_PITCH);
     if (!w || !h || !img || w > 4096 || h > 4096) return;
@@ -175,19 +175,19 @@ static void h_GX2WaitForVsync(PPCContext&) { wait_vsync(); }
 // GX2GetSwapStatus(u32* swapCount, u32* flipCount, OSTime* lastFlip, OSTime* lastVsync)
 static void h_GX2GetSwapStatus(PPCContext& c) {
     uint64_t now = ((uint64_t)ppc_mftb(269) << 32) | ppc_mftb(268);
-    if (c.r[3]) st32(c.r[3], g_swap_count);
-    if (c.r[4]) st32(c.r[4], g_swap_count);
-    if (c.r[5]) st64(c.r[5], now);
-    if (c.r[6]) st64(c.r[6], now);
+    if (c.gpr[3]) st32(c.gpr[3], g_swap_count);
+    if (c.gpr[4]) st32(c.gpr[4], g_swap_count);
+    if (c.gpr[5]) st64(c.gpr[5], now);
+    if (c.gpr[6]) st64(c.gpr[6], now);
 }
 
 static void h_draw(PPCContext&) { g_draws++; }
-static void h_ret0(PPCContext& c) { c.r[3] = 0; }
-static void h_ret1(PPCContext& c) { c.r[3] = 1; }
+static void h_ret0(PPCContext& c) { c.gpr[3] = 0; }
+static void h_ret1(PPCContext& c) { c.gpr[3] = 1; }
 
 // GX2CopySurface(src, srcMip, srcSlice, dst, dstMip, dstSlice) -- grob: Basis-Ebene kopieren
 static void h_GX2CopySurface(PPCContext& c) {
-    uint32_t src = c.r[3], dst = c.r[6];
+    uint32_t src = c.gpr[3], dst = c.gpr[6];
     uint32_t si = ld32(src + SURF_IMAGE), di = ld32(dst + SURF_IMAGE);
     uint32_t n = std::min(ld32(src + SURF_IMAGESIZE), ld32(dst + SURF_IMAGESIZE));
     if (si && di && n && n < 0x4000000) memmove(g_base + di, g_base + si, n);
@@ -195,35 +195,35 @@ static void h_GX2CopySurface(PPCContext& c) {
 
 // Hilfsgroessen
 static void h_GX2CalcAuxInfo(PPCContext& c) {
-    if (c.r[4]) st32(c.r[4], 0x2000);
-    if (c.r[5]) st32(c.r[5], 0x800);
+    if (c.gpr[4]) st32(c.gpr[4], 0x2000);
+    if (c.gpr[5]) st32(c.gpr[5], 0x800);
 }
-static void h_GX2CalcFetchShaderSizeEx(PPCContext& c) { c.r[3] = align_up(c.r[3] * 0x10 + 0x40, 0x20); }
+static void h_GX2CalcFetchShaderSizeEx(PPCContext& c) { c.gpr[3] = align_up(c.gpr[3] * 0x10 + 0x40, 0x20); }
 // GX2InitFetchShaderEx(GX2FetchShader*, buffer, count, attribs, type, tess)
 static void h_GX2InitFetchShaderEx(PPCContext& c) {
-    uint32_t fs = c.r[3];
-    st32(fs + 0x00, c.r[7]);
-    st32(fs + 0x08, align_up(c.r[5] * 0x10 + 0x40, 0x20));
-    st32(fs + 0x0C, c.r[4]);
-    st32(fs + 0x10, c.r[5]);
+    uint32_t fs = c.gpr[3];
+    st32(fs + 0x00, c.gpr[7]);
+    st32(fs + 0x08, align_up(c.gpr[5] * 0x10 + 0x40, 0x20));
+    st32(fs + 0x0C, c.gpr[4]);
+    st32(fs + 0x10, c.gpr[5]);
 }
-static void h_ringsize(PPCContext& c) { c.r[3] = 0x40000; }
-static void h_gprs(PPCContext& c) { c.r[3] = 64; }
-static void h_stack(PPCContext& c) { c.r[3] = 32; }
-static void h_GX2TempGetGPUVersion(PPCContext& c) { c.r[3] = 2; }
+static void h_ringsize(PPCContext& c) { c.gpr[3] = 0x40000; }
+static void h_gprs(PPCContext& c) { c.gpr[3] = 64; }
+static void h_stack(PPCContext& c) { c.gpr[3] = 32; }
+static void h_GX2TempGetGPUVersion(PPCContext& c) { c.gpr[3] = 2; }
 static void h_timeconv(PPCContext&) { /* r3:r4 bleiben gleich */ }
 static void h_samplecycle(PPCContext& c) {
-    if (c.r[3]) st64(c.r[3], ((uint64_t)ppc_mftb(269) << 32) | ppc_mftb(268));
+    if (c.gpr[3]) st64(c.gpr[3], ((uint64_t)ppc_mftb(269) << 32) | ppc_mftb(268));
 }
 // GX2GetCurrentDisplayList(void** list, u32* size) / GX2GetContextStateDisplayList(state, list*, size*)
 static void h_GX2GetCurrentDisplayList(PPCContext& c) {
-    if (c.r[3]) st32(c.r[3], 0);
-    if (c.r[4]) st32(c.r[4], 0);
-    c.r[3] = 0;
+    if (c.gpr[3]) st32(c.gpr[3], 0);
+    if (c.gpr[4]) st32(c.gpr[4], 0);
+    c.gpr[3] = 0;
 }
 static void h_GX2GetContextStateDisplayList(PPCContext& c) {
-    if (c.r[4]) st32(c.r[4], 0);
-    if (c.r[5]) st32(c.r[5], 0);
+    if (c.gpr[4]) st32(c.gpr[4], 0);
+    if (c.gpr[5]) st32(c.gpr[5], 0);
 }
 
 void gx2_register(void (*reg)(const char*, const char*, void (*)(PPCContext&))) {

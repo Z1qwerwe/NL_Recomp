@@ -5,13 +5,20 @@ Inoffizieller Versuch, **Nintendo Land (Wii U)** per Static Recompilation nativ 
 > Dieses Repo enthält **keine** Spieldateien und keinen aus dem Spiel erzeugten Code.
 > Du brauchst deinen eigenen Dump von Nintendo Land (z. B. mit dumpling von deiner Wii U).
 
+## Zwei Wege
+
+1. **Cemu-Version (empfohlen):** Cemu (MPL-2.0) liefert Betriebssystem, Grafik (Vulkan/OpenGL), Audio, Controller und Mikrofon. Statt Cemus CPU-Emulation laufen die recompilierten, nativen Spielfunktionen (`cemu/aot/`). Im Launcher: **Cemu-Version bauen**, dann **SPIELEN**.
+2. **Eigene Runtime:** komplett eigene Umsetzung (`runtime/`), gut zum Testen und Debuggen, aber noch ohne echte Grafik.
+
 ## Aufbau
 
 | Ordner | Inhalt |
 |---|---|
 | `launcher.py`, `nlrecomp/` | Launcher (Python/Tkinter): Spiel erkennen, analysieren, Shader sammeln, recompilen, bauen, starten |
 | `recomp/` | Recompiler: `.rpx` → C++ (PowerPC/Espresso inkl. Paired Singles) |
-| `runtime/` | C++-Runtime: Speicher, HLE der Wii-U-Systembibliotheken (coreinit, FS, Threads, …) |
+| `runtime/` | Eigene C++-Runtime: Speicher, HLE der Wii-U-Systembibliotheken (coreinit, FS, Threads, …) |
+| `cemu/aot/` | Anbindung an Cemu: Header für den generierten Code, `nl_aot_glue.cpp`, CMake-Einbindung |
+| `nlrecomp/cemu.py` | Holt Cemu (fester Stand), wendet die kleinen Anpassungen an und baut alles |
 | `aroma-plugin/` | Experimentelles Aroma-Plugin für Netplay auf echter Hardware |
 | `tools/` | Hilfstools (RPX-Import-Analyse) |
 

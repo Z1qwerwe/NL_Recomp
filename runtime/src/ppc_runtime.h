@@ -79,51 +79,90 @@ static NL_INLINE int32_t ppc_fctiw(double d) {
     return (int32_t)std::nearbyint(d);
 }
 
-struct PPCContext {
-    uint32_t r[32];
-    double f[32];
-    double ps1[32];
-    uint32_t cr, lr, ctr;
-    uint32_t ca, so, ov;
-    uint32_t fpscr, msr;
-    uint32_t gqr[8];
-    uint32_t reserve;
-
-    NL_INLINE void setcr_flags(int field, uint32_t nib) {
-        int sh = 28 - 4 * field;
-        cr = (cr & ~(0xFu << sh)) | ((nib & 0xF) << sh);
-    }
-    NL_INLINE void setcr(int field, int32_t a, int32_t b) {
-        setcr_flags(field, (a < b ? 8 : a > b ? 4 : 2) | (so & 1));
-    }
-    NL_INLINE void setcr_u(int field, uint32_t a, uint32_t b) {
-        setcr_flags(field, (a < b ? 8 : a > b ? 4 : 2) | (so & 1));
-    }
-    NL_INLINE void setcr0(int32_t v) { setcr(0, v, 0); }
-    NL_INLINE void setcr_f(int field, double a, double b) {
-        setcr_flags(field, (a != a || b != b) ? 1 : a < b ? 8 : a > b ? 4 : 2);
-    }
-    NL_INLINE void setcrbit(int bit, uint32_t v) {
-        uint32_t m = 1u << (31 - bit);
-        cr = v ? (cr | m) : (cr & ~m);
-    }
-    NL_INLINE uint32_t get_xer() const { return (so << 31) | (ov << 30) | (ca << 29); }
-    NL_INLINE void set_xer(uint32_t v) { so = (v >> 31) & 1; ov = (v >> 30) & 1; ca = (v >> 29) & 1; }
+// CPU-Zustand im selben Format wie Cemus PPCInterpreter_t (gleiche Feldnamen),
+// damit derselbe generierte Code in der eigenen Runtime und in Cemu laeuft.
+union FPR_t {
+    double fpr;
+    struct { double fp0; double fp1; };
+    struct { uint64_t fp0int; uint64_t fp1int; };
 };
+
+struct PPCContext {
+    uint32_t instructionPointer;
+    uint32_t gpr[32];
+    FPR_t fpr[32];
+    uint32_t fpscr;
+    uint8_t cr[32];
+    uint8_t xer_ca, xer_so, xer_ov;
+    int32_t remainingCycles;
+    struct { uint32_t LR, CTR, XER, UPIR, UGQR[8]; } spr;
+    uint32_t reservedMemAddr, reservedMemValue;
+    uint32_t msr;
+};
+
+#define NL_LOOP(c) ((void)0)
+
+static NL_INLINE void ppc_setcr_flags(PPCContext& c, int f, uint32_t nib) {
+    c.cr[f * 4 + 0] = (nib >> 3) & 1; c.cr[f * 4 + 1] = (nib >> 2) & 1;
+    c.cr[f * 4 + 2] = (nib >> 1) & 1; c.cr[f * 4 + 3] = nib & 1;
+}
+static NL_INLINE void ppc_setcr(PPCContext& c, int f, int32_t a, int32_t b) {
+    c.cr[f * 4 + 0] = a < b; c.cr[f * 4 + 1] = a > b; c.cr[f * 4 + 2] = a == b; c.cr[f * 4 + 3] = c.xer_so;
+}
+static NL_INLINE void ppc_setcr_u(PPCContext& c, int f, uint32_t a, uint32_t b) {
+    c.cr[f * 4 + 0] = a < b; c.cr[f * 4 + 1] = a > b; c.cr[f * 4 + 2] = a == b; c.cr[f * 4 + 3] = c.xer_so;
+}
+static NL_INLINE void ppc_setcr0(PPCContext& c, int32_t v) { ppc_setcr(c, 0, v, 0); }
+static NL_INLINE void ppc_setcr_f(PPCContext& c, int f, double a, double b) {
+    bool un = (a != a) || (b != b);
+    c.cr[f * 4 + 0] = !un && a < b; c.cr[f * 4 + 1] = !un && a > b;
+    c.cr[f * 4 + 2] = !un && a == b; c.cr[f * 4 + 3] = un;
+}
+static NL_INLINE void ppc_setcrbit(PPCContext& c, int bit, uint32_t v) { c.cr[bit] = v & 1; }
+static NL_INLINE uint32_t ppc_get_cr(PPCContext& c) {
+    uint32_t v = 0;
+    for (int i = 0; i < 32; i++) v |= (uint32_t)(c.cr[i] & 1) << (31 - i);
+    return v;
+}
+static NL_INLINE void ppc_set_cr(PPCContext& c, uint32_t v) {
+    for (int i = 0; i < 32; i++) c.cr[i] = (v >> (31 - i)) & 1;
+}
+static NL_INLINE void ppc_mcrf(PPCContext& c, int d, int s) {
+    for (int k = 0; k < 4; k++) c.cr[d * 4 + k] = c.cr[s * 4 + k];
+}
+static NL_INLINE uint32_t ppc_get_xer(PPCContext& c) {
+    return ((uint32_t)c.xer_so << 31) | ((uint32_t)c.xer_ov << 30) | ((uint32_t)c.xer_ca << 29);
+}
+static NL_INLINE void ppc_set_xer(PPCContext& c, uint32_t v) {
+    c.xer_so = (v >> 31) & 1; c.xer_ov = (v >> 30) & 1; c.xer_ca = (v >> 29) & 1;
+}
+static NL_INLINE uint32_t ppc_get_msr(PPCContext& c) { return c.msr; }
+static NL_INLINE void ppc_set_msr(PPCContext& c, uint32_t v) { c.msr = v; }
+static NL_INLINE uint32_t ppc_lwarx(PPCContext& c, uint32_t ea) {
+    c.reservedMemAddr = ea;
+    c.reservedMemValue = ld32(ea);
+    return c.reservedMemValue;
+}
+static NL_INLINE void ppc_stwcx(PPCContext& c, uint32_t ea, uint32_t v) {
+    bool ok = c.reservedMemAddr == ea && ld32(ea) == c.reservedMemValue;
+    if (ok) st32(ea, v);
+    c.reservedMemAddr = 0;
+    ppc_setcr_flags(c, 0, (ok ? 2u : 0u) | c.xer_so);
+}
 
 static NL_INLINE uint32_t ppc_sraw(PPCContext& c, uint32_t s, uint32_t b) {
     int32_t x = (int32_t)s;
-    if (b & 0x20) { c.ca = x < 0; return x < 0 ? 0xFFFFFFFFu : 0; }
+    if (b & 0x20) { c.xer_ca = x < 0; return x < 0 ? 0xFFFFFFFFu : 0; }
     uint32_t n = b & 31;
-    c.ca = (x < 0) && n && (s & ((1u << n) - 1));
+    c.xer_ca = (x < 0) && n && (s & ((1u << n) - 1));
     return (uint32_t)(x >> n);
 }
 
 static inline void ppc_lswi(PPCContext& c, uint32_t ea, int rd, int nb) {
     int r = rd - 1, sh = 0;
     for (int k = 0; k < nb; k++, ea++) {
-        if (sh == 0) { r = (r + 1) & 31; c.r[r] = 0; }
-        c.r[r] |= ld8(ea) << (24 - sh);
+        if (sh == 0) { r = (r + 1) & 31; c.gpr[r] = 0; }
+        c.gpr[r] |= ld8(ea) << (24 - sh);
         sh = (sh + 8) & 31;
     }
 }
@@ -131,7 +170,7 @@ static inline void ppc_stswi(PPCContext& c, uint32_t ea, int rs, int nb) {
     int r = rs - 1, sh = 0;
     for (int k = 0; k < nb; k++, ea++) {
         if (sh == 0) r = (r + 1) & 31;
-        st8(ea, c.r[r] >> (24 - sh));
+        st8(ea, c.gpr[r] >> (24 - sh));
         sh = (sh + 8) & 31;
     }
 }
@@ -157,7 +196,7 @@ extern const size_t g_import_count;
 extern const uint32_t g_entry, g_sda_base, g_sda2_base, g_stack_size;
 
 // In der Runtime implementiert
-void hle_call(PPCContext& c, uint32_t import_addr);
+void hle_call(PPCContext& c, uint32_t import_addr, uint32_t call_site = 0);
 void call_indirect(PPCContext& c, uint32_t addr);
 void ppc_unimpl(PPCContext& c, uint32_t addr, uint32_t raw);
 void ppc_trap(PPCContext& c, uint32_t addr);

@@ -199,6 +199,9 @@ def run_gui():
             pipeline.step_build(settings, g, log, stop_fn)
         worker(all_steps)
 
+    def do_cemu():
+        worker(lambda: pipeline.step_cemu_build(settings, state["game"], log, stop_fn))
+
     def do_play():
         worker(lambda: pipeline.step_launch(settings, state["game"], log))
 
@@ -219,6 +222,7 @@ def run_gui():
             ("shader_translator", "Shader-Translator", ".exe der Runtime, die GX2 -> SPIR-V macht"),
             ("runtime_dir", "Runtime-Projekt", "leer = mitgelieferte Runtime"),
             ("exe_name", "Exe-Name", "Name der fertigen .exe"),
+            ("backend", "Backend", "cemu = Cemu-Version, eigene = eigene Runtime"),
         ]
         vars_ = {}
         for i, (k, label, hint) in enumerate(fields):
@@ -241,6 +245,7 @@ def run_gui():
     add_btn("analyze", "Analysieren", do_analyze)
     add_btn("shaders", "Shader vorkompilieren", do_shaders)
     add_btn("build", "Recompilen + Bauen", do_build)
+    add_btn("cemu", "Cemu-Version bauen", do_cemu)
     add_btn("stop", "Stopp", do_stop)
     ttk.Button(bar, text="Einstellungen", command=open_settings).pack(side="right")
     play = ttk.Button(bar, text="SPIELEN", style="Accent.TButton", command=do_play)
@@ -250,10 +255,10 @@ def run_gui():
     def refresh_buttons():
         g = state["game"]
         ready = bool(g and g.rpx) and not state["busy"]
-        for k in ("analyze", "shaders", "build"):
+        for k in ("analyze", "shaders", "build", "cemu"):
             buttons[k].state(["!disabled"] if ready else ["disabled"])
         buttons["stop"].state(["!disabled"] if state["busy"] else ["disabled"])
-        has_exe = bool(g and g.rpx and pipeline.find_exe(settings, g))
+        has_exe = bool(g and g.rpx and (pipeline.find_exe(settings, g) or pipeline.find_cemu_exe(settings)))
         buttons["play"].state(["!disabled"] if has_exe and not state["busy"] else ["disabled"])
 
     refresh_buttons()

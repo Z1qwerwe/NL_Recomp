@@ -85,7 +85,7 @@ void call_indirect(PPCContext& c, uint32_t addr) {
     if (hle_is_fake_addr(addr)) { hle_call_fake(c, addr); return; }
     if (addr >= 0xC0000000u && addr < 0xC1000000u) { hle_call(c, addr); return; }
     if (PPCFunc fn = find_func(addr)) { fn(c); return; }
-    fprintf(stderr, "[CPU] Unbekanntes Sprungziel 0x%08X (LR=0x%08X)\n", addr, c.lr);
+    fprintf(stderr, "[CPU] Unbekanntes Sprungziel 0x%08X (LR=0x%08X)\n", addr, c.spr.LR);
     nl_dump_trace("Absturz");
     exit(2);
 }
@@ -97,12 +97,12 @@ void ppc_unimpl(PPCContext& c, uint32_t addr, uint32_t raw) {
 }
 
 void ppc_trap(PPCContext& c, uint32_t addr) {
-    fprintf(stderr, "[CPU] Trap bei 0x%08X (LR=0x%08X)\n", addr, c.lr);
+    fprintf(stderr, "[CPU] Trap bei 0x%08X (LR=0x%08X)\n", addr, c.spr.LR);
     exit(4);
 }
 
 void ppc_syscall(PPCContext& c) {
-    fprintf(stderr, "[CPU] Syscall r0=0x%08X\n", c.r[0]);
+    fprintf(stderr, "[CPU] Syscall r0=0x%08X\n", c.gpr[0]);
 }
 
 uint32_t ppc_mfspr(PPCContext& c, int spr) {
@@ -137,13 +137,13 @@ static double dequant(uint32_t ea, int type, int scale, int& size) {
 }
 
 void psq_load(PPCContext& c, uint32_t ea, int fd, int w, int gqr) {
-    uint32_t g = c.gqr[gqr];
+    uint32_t g = c.spr.UGQR[gqr];
     int type = (g >> 16) & 7;
     int scale = (int)((g >> 24) & 0x3F);
     if (scale & 0x20) scale -= 0x40;
     int size = 4;
-    c.f[fd] = dequant(ea, type, scale, size);
-    c.ps1[fd] = w ? 1.0 : dequant(ea + size, type, scale, size);
+    c.fpr[fd].fp0 = dequant(ea, type, scale, size);
+    c.fpr[fd].fp1 = w ? 1.0 : dequant(ea + size, type, scale, size);
 }
 
 static void quant(uint32_t ea, double v, int type, int scale, int& size) {
@@ -159,13 +159,13 @@ static void quant(uint32_t ea, double v, int type, int scale, int& size) {
 }
 
 void psq_store(PPCContext& c, uint32_t ea, int fs, int w, int gqr) {
-    uint32_t g = c.gqr[gqr];
+    uint32_t g = c.spr.UGQR[gqr];
     int type = g & 7;
     int scale = (int)((g >> 8) & 0x3F);
     if (scale & 0x20) scale -= 0x40;
     int size = 4;
-    quant(ea, c.f[fs], type, scale, size);
-    if (!w) quant(ea + size, c.ps1[fs], type, scale, size);
+    quant(ea, c.fpr[fs].fp0, type, scale, size);
+    if (!w) quant(ea + size, c.fpr[fs].fp1, type, scale, size);
 }
 
 // --- Start ------------------------------------------------------------------
@@ -186,9 +186,9 @@ int main(int argc, char** argv) {
     static PPCContext c;
     memset(&c, 0, sizeof(c));
     const uint32_t stack_top = 0x4F000000u;   // Hauptstack: 0x4E000000 - 0x4F000000
-    c.r[1] = stack_top - 0x100;
-    c.r[2] = g_sda2_base;
-    c.r[13] = g_sda_base;
+    c.gpr[1] = stack_top - 0x100;
+    c.gpr[2] = g_sda2_base;
+    c.gpr[13] = g_sda_base;
     hle_init(c);
 
     // argc/argv wie unter Cafe OS
@@ -197,8 +197,8 @@ int main(int argc, char** argv) {
     memcpy(g_base + name, "Lunch.rpx", 10);
     st32(argv_ptr, name);
     st32(argv_ptr + 4, 0);
-    c.r[3] = 1;
-    c.r[4] = argv_ptr;
+    c.gpr[3] = 1;
+    c.gpr[4] = argv_ptr;
 
     // Das Spiel laeuft in einem eigenen Thread, das Fenster im Hauptthread
     bool window = getenv("NL_HEADLESS") == nullptr && platform_init();
@@ -206,8 +206,8 @@ int main(int argc, char** argv) {
     return platform_run([entry]() {
         threads_main_enter();
         call_indirect(c, entry);
-        printf("Einstiegsfunktion ist zurueckgekehrt, r3=%d\n", (int32_t)c.r[3]);
+        printf("Einstiegsfunktion ist zurueckgekehrt, r3=%d\n", (int32_t)c.gpr[3]);
         hle_report();
-        return (int)c.r[3];
+        return (int)c.gpr[3];
     });
 }

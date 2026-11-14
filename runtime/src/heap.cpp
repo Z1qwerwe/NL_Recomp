@@ -113,78 +113,78 @@ static ExpHeap* exp_heap(uint32_t h) {
 
 // MEMCreateExpHeapEx(start, size, flags) -> Handle (der Header liegt am Anfang)
 static void h_MEMCreateExpHeapEx(PPCContext& c) {
-    uint32_t start = c.r[3], size = c.r[4];
-    if (!start || size < 0x40) { c.r[3] = 0; return; }
+    uint32_t start = c.gpr[3], size = c.gpr[4];
+    if (!start || size < 0x40) { c.gpr[3] = 0; return; }
     ExpHeap h;
     h.init(start + 0x40, start + size);   // 0x40 Bytes fuer den Header reservieren
     g_exp[start] = h;
-    c.r[3] = start;
+    c.gpr[3] = start;
 }
-static void h_MEMDestroyExpHeap(PPCContext& c) { g_exp.erase(c.r[3]); c.r[3] = c.r[3]; }
+static void h_MEMDestroyExpHeap(PPCContext& c) { g_exp.erase(c.gpr[3]); c.gpr[3] = c.gpr[3]; }
 
 // MEMAllocFromExpHeapEx(heap, size, align)
 static void h_MEMAllocFromExpHeapEx(PPCContext& c) {
-    ExpHeap* h = exp_heap(c.r[3]);
-    uint32_t p = h ? h->alloc(c.r[4], (int32_t)c.r[5]) : 0;
-    if (!p) fprintf(stderr, "[Heap] Alloc fehlgeschlagen: Heap 0x%08X, %u Bytes\n", c.r[3], c.r[4]);
-    c.r[3] = p;
+    ExpHeap* h = exp_heap(c.gpr[3]);
+    uint32_t p = h ? h->alloc(c.gpr[4], (int32_t)c.gpr[5]) : 0;
+    if (!p) fprintf(stderr, "[Heap] Alloc fehlgeschlagen: Heap 0x%08X, %u Bytes\n", c.gpr[3], c.gpr[4]);
+    c.gpr[3] = p;
 }
 static void h_MEMFreeToExpHeap(PPCContext& c) {
-    if (ExpHeap* h = exp_heap(c.r[3])) h->free(c.r[4]);
+    if (ExpHeap* h = exp_heap(c.gpr[3])) h->free(c.gpr[4]);
 }
 static void h_MEMGetAllocatableSizeForExpHeapEx(PPCContext& c) {
-    ExpHeap* h = exp_heap(c.r[3]);
-    c.r[3] = h ? h->largest((int32_t)c.r[4]) : 0;
+    ExpHeap* h = exp_heap(c.gpr[3]);
+    c.gpr[3] = h ? h->largest((int32_t)c.gpr[4]) : 0;
 }
 static void h_MEMGetTotalFreeSizeForExpHeap(PPCContext& c) {
-    ExpHeap* h = exp_heap(c.r[3]);
-    c.r[3] = h ? h->total_free() : 0;
+    ExpHeap* h = exp_heap(c.gpr[3]);
+    c.gpr[3] = h ? h->total_free() : 0;
 }
 
 // Frame Heaps
 static void h_MEMCreateFrmHeapEx(PPCContext& c) {
-    uint32_t start = c.r[3], size = c.r[4];
-    if (!start || size < 0x40) { c.r[3] = 0; return; }
+    uint32_t start = c.gpr[3], size = c.gpr[4];
+    if (!start || size < 0x40) { c.gpr[3] = 0; return; }
     FrmHeap f{start + 0x40, start + size, start + 0x40, start + size};
     g_frm[start] = f;
-    c.r[3] = start;
+    c.gpr[3] = start;
 }
-static void h_MEMDestroyFrmHeap(PPCContext& c) { g_frm.erase(c.r[3]); }
+static void h_MEMDestroyFrmHeap(PPCContext& c) { g_frm.erase(c.gpr[3]); }
 static void h_MEMAllocFromFrmHeapEx(PPCContext& c) {
-    auto it = g_frm.find(c.r[3]);
-    if (it == g_frm.end()) { c.r[3] = 0; return; }
+    auto it = g_frm.find(c.gpr[3]);
+    if (it == g_frm.end()) { c.gpr[3] = 0; return; }
     FrmHeap& f = it->second;
-    uint32_t size = (c.r[4] + 3) & ~3u;
-    int32_t align = (int32_t)c.r[5];
+    uint32_t size = (c.gpr[4] + 3) & ~3u;
+    int32_t align = (int32_t)c.gpr[5];
     uint32_t al = (uint32_t)(align < 0 ? -align : align);
     if (al < 4) al = 4;
     uint32_t p;
     if (align >= 0) {
         p = (f.head + al - 1) & ~(al - 1);
-        if (p + size > f.tail) { c.r[3] = 0; return; }
+        if (p + size > f.tail) { c.gpr[3] = 0; return; }
         f.head = p + size;
     } else {
         p = (f.tail - size) & ~(al - 1);
-        if (p < f.head) { c.r[3] = 0; return; }
+        if (p < f.head) { c.gpr[3] = 0; return; }
         f.tail = p;
     }
-    c.r[3] = p;
+    c.gpr[3] = p;
 }
 static void h_MEMGetAllocatableSizeForFrmHeapEx(PPCContext& c) {
-    auto it = g_frm.find(c.r[3]);
-    if (it == g_frm.end()) { c.r[3] = 0; return; }
-    int32_t align = (int32_t)c.r[4];
+    auto it = g_frm.find(c.gpr[3]);
+    if (it == g_frm.end()) { c.gpr[3] = 0; return; }
+    int32_t align = (int32_t)c.gpr[4];
     uint32_t al = (uint32_t)(align < 0 ? -align : align);
     if (al < 4) al = 4;
     uint32_t p = (it->second.head + al - 1) & ~(al - 1);
-    c.r[3] = p < it->second.tail ? it->second.tail - p : 0;
+    c.gpr[3] = p < it->second.tail ? it->second.tail - p : 0;
 }
 
 // Standard-Heap und Basis-Heap
-static void h_MEMGetBaseHeapHandle(PPCContext& c) { c.r[3] = DEFAULT_HEAP_HANDLE; }
-static void h_MEMAllocFromDefaultHeap(PPCContext& c) { c.r[3] = default_heap().alloc(c.r[3], 0x40); }
-static void h_MEMAllocFromDefaultHeapEx(PPCContext& c) { c.r[3] = default_heap().alloc(c.r[3], (int32_t)c.r[4]); }
-static void h_MEMFreeToDefaultHeap(PPCContext& c) { default_heap().free(c.r[3]); }
+static void h_MEMGetBaseHeapHandle(PPCContext& c) { c.gpr[3] = DEFAULT_HEAP_HANDLE; }
+static void h_MEMAllocFromDefaultHeap(PPCContext& c) { c.gpr[3] = default_heap().alloc(c.gpr[3], 0x40); }
+static void h_MEMAllocFromDefaultHeapEx(PPCContext& c) { c.gpr[3] = default_heap().alloc(c.gpr[3], (int32_t)c.gpr[4]); }
+static void h_MEMFreeToDefaultHeap(PPCContext& c) { default_heap().free(c.gpr[3]); }
 
 void heap_register(void (*reg)(const char*, const char*, void (*)(PPCContext&))) {
     const char* ci = "coreinit";

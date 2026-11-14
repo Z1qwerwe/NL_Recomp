@@ -161,6 +161,54 @@ def find_exe(settings, game):
     return None
 
 
+def _cemu_dirs(settings):
+    # Kurzer Pfad: vcpkg/MSBuild scheitern sonst an Windows' 260-Zeichen-Grenze
+    default = r"C:\NLR" if os.name == "nt" else os.path.join(settings["work_dir"], "cemu")
+    base = settings.get("cemu_dir") or default
+    return os.path.join(base, "src"), os.path.join(base, "build")
+
+
+def step_cemu_build(settings, game, log, stop):
+    """Cemu holen, anpassen und mit unserem nativen Spielcode bauen."""
+    from . import cemu
+    cmake = _find_cmake()
+    if not cmake:
+        raise RuntimeError("CMake nicht gefunden (Visual Studio 2022 mit C++-Paket installieren).")
+    src, build = _cemu_dirs(settings)
+    os.makedirs(os.path.dirname(src), exist_ok=True)
+
+    def run(cmd, env=None, check=True):
+        log(f"> {' '.join(cmd)}")
+        p = subprocess.Popen(cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                             text=True, encoding="utf-8", errors="replace")
+        for line in p.stdout:
+            log("  " + line.rstrip())
+            if stop():
+                p.terminate()
+                break
+        if p.wait() != 0 and check:
+            raise RuntimeError(f"Befehl fehlgeschlagen (Code {p.returncode})")
+
+    step_recompile(settings, game, log, stop)
+    cemu.fetch(src, run, log)
+    cemu.patch(src, log)
+    gen = os.path.join(_game_work_dir(settings, game), "generated")
+    aot = os.path.join(APP_DIR, "cemu", "aot")
+    jobs = str(max(1, min(4, (os.cpu_count() or 2) // 2)))
+    cemu.configure_and_build(src, build, aot, gen, cmake, run, log, jobs)
+    exe = cemu.find_exe(src)
+    if not exe:
+        raise RuntimeError("Cemu wurde gebaut, aber die .exe fehlt in cemu/src/bin.")
+    os.makedirs(os.path.join(os.path.dirname(exe), "portable"), exist_ok=True)   # Einstellungen lokal
+    log(f"Fertig: {exe}")
+
+
+def find_cemu_exe(settings):
+    from . import cemu
+    src, _ = _cemu_dirs(settings)
+    return cemu.find_exe(src)
+
+
 def _kill_running(settings, log):
     """Beendet eine noch laufende NintendoLand.exe (sonst kann der Linker sie nicht ueberschreiben)."""
     if os.name != "nt":
@@ -171,6 +219,12 @@ def _kill_running(settings, log):
 
 
 def step_launch(settings, game, log):
+    cemu_exe = find_cemu_exe(settings)
+    if cemu_exe and settings.get("backend", "cemu") == "cemu":
+        log(f"Starte Cemu mit nativem Nintendo-Land-Code: {cemu_exe}")
+        log("Beim ersten Start fragt Cemu nach ein paar Einstellungen (Sprache, Spielordner) - einfach durchklicken.")
+        subprocess.Popen([cemu_exe, "-g", game.base.path], cwd=os.path.dirname(cemu_exe))
+        return
     exe = find_exe(settings, game)
     if not exe:
         raise RuntimeError("Noch keine fertige .exe. Erst recompilen und bauen.")

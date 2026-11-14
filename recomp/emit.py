@@ -19,19 +19,19 @@ def mask(mb, me):
 
 
 def R(n):
-    return f"c.r[{n}]"
+    return f"c.gpr[{n}]"
 
 
 def RA0(n):
-    return "0u" if n == 0 else f"c.r[{n}]"
+    return "0u" if n == 0 else f"c.gpr[{n}]"
 
 
 def F(n):
-    return f"c.f[{n}]"
+    return f"c.fpr[{n}].fp0"
 
 
 def P1(n):
-    return f"c.ps1[{n}]"
+    return f"c.fpr[{n}].fp1"
 
 
 def ea_d(i):
@@ -39,11 +39,11 @@ def ea_d(i):
 
 
 def ea_x(i):
-    return f"(uint32_t)({RA0(i.rA)} + c.r[{i.rB}])"
+    return f"(uint32_t)({RA0(i.rA)} + c.gpr[{i.rB}])"
 
 
 def rc0(i, val):
-    return f" c.setcr0((int32_t){val});" if i.Rc else ""
+    return f" ppc_setcr0(c, (int32_t){val});" if i.Rc else ""
 
 
 class FuncEmitter:
@@ -77,19 +77,21 @@ class FuncEmitter:
         BO, BI = i.BO, i.BI
         parts, pre = [], ""
         if not (BO & 4):
-            pre = "c.ctr--; "
-            parts.append("c.ctr == 0" if BO & 2 else "c.ctr != 0")
+            pre = "c.spr.CTR--; "
+            parts.append("c.spr.CTR == 0" if BO & 2 else "c.spr.CTR != 0")
         if not (BO & 16):
-            bit = f"((c.cr >> {31 - BI}) & 1)"
+            bit = f"c.cr[{BI}]"
             parts.append(bit if BO & 8 else f"!{bit}")
         return pre, (" && ".join(parts) if parts else "true")
 
     def jump(self, target, i):
         """Code fuer einen Sprung (ohne Link) zu target."""
         if self.inside(target) and target in self.labels:
-            return f"goto L_{target:08x};"
+            # Rueckwaerts-Spruenge (Schleifen) geben dem Scheduler die Chance, zu wechseln
+            loop = "NL_LOOP(c); " if target <= i.addr else ""
+            return f"{loop}goto L_{target:08x};"
         if target in self.rpx.imports:
-            return f"hle_call(c, 0x{target:08x}); return;"
+            return f"hle_call(c, 0x{target:08x}, 0x{i.addr:08x}); return;"
         if target in self.func_starts:
             return f"fn_{target:08x}(c); return;"
         return f"call_indirect(c, 0x{target:08x}); return;"
@@ -97,14 +99,14 @@ class FuncEmitter:
     def call(self, target, i):
         nxt = i.addr + 4
         if target in self.rpx.imports:
-            return f"c.lr = 0x{nxt:08x}; hle_call(c, 0x{target:08x});"
+            return f"c.spr.LR = 0x{nxt:08x}; hle_call(c, 0x{target:08x}, 0x{i.addr:08x});"
         if target in self.func_starts:
-            return f"c.lr = 0x{nxt:08x}; fn_{target:08x}(c);"
-        return f"c.lr = 0x{nxt:08x}; call_indirect(c, 0x{target:08x});"
+            return f"c.spr.LR = 0x{nxt:08x}; fn_{target:08x}(c);"
+        return f"c.spr.LR = 0x{nxt:08x}; call_indirect(c, 0x{target:08x});"
 
     def bctr_dispatch(self):
         cases = " ".join(f"case 0x{a:08x}: goto L_{a:08x};" for a in sorted(self.labels))
-        return (f"switch (c.ctr) {{ {cases} default: call_indirect(c, c.ctr); return; }}")
+        return (f"switch (c.spr.CTR) {{ {cases} default: call_indirect(c, c.spr.CTR); return; }}")
 
     # --- Instruktionen -----------------------------------------------------
     def emit_ins(self, i):
@@ -124,14 +126,25 @@ class FuncEmitter:
         if n == "bclr":
             pre, cnd = self.cond(i)
             if i.LK:
-                return f"{pre}if ({cnd}) {{ uint32_t t = c.lr; c.lr = 0x{nxt:08x}; call_indirect(c, t); }}"
+                return f"{pre}if ({cnd}) {{ uint32_t t = c.spr.LR; c.spr.LR = 0x{nxt:08x}; call_indirect(c, t); }}"
             return f"{pre}if ({cnd}) return;"
         if n == "bcctr":
             pre, cnd = self.cond(i)
             if i.LK:
-                return f"{pre}if ({cnd}) {{ c.lr = 0x{nxt:08x}; call_indirect(c, c.ctr); }}"
+                return f"{pre}if ({cnd}) {{ c.spr.LR = 0x{nxt:08x}; call_indirect(c, c.spr.CTR); }}"
             disp = self.bctr_dispatch()
             return f"{pre}if ({cnd}) {{ {disp} }}"
+
+        # Immediate zeigt auf einen Import: Wert zur Laufzeit aus dem (vom Lader
+        # relozierten) Befehl im Speicher lesen, damit jeder Lader passt.
+        site = self.rpx.import_imm_sites.get(i.addr)
+        if site:
+            if n == "addis":
+                return f"{R(d)} = {RA0(a)} + ((uint32_t)ld16(0x{i.addr + 2:08x}) << 16);"
+            if n in ("ori", "oris"):
+                sh = " << 16" if n == "oris" else ""
+                return f"{R(a)} = {R(d)} | ((uint32_t)ld16(0x{i.addr + 2:08x}){sh});"
+            i.imm = f"(int32_t)(int16_t)ld16(0x{i.addr + 2:08x})"
 
         # Integer-Arithmetik
         if n == "addi":
@@ -139,38 +152,38 @@ class FuncEmitter:
         if n == "addis":
             return f"{R(d)} = {RA0(a)} + 0x{(i.uimm << 16) & 0xFFFFFFFF:08x}u;"
         if n in ("addic", "addic."):
-            s = f"{{ uint32_t x = {R(a)}; uint32_t r = x + {i.imm}; c.ca = r < x; {R(d)} = r;"
-            return s + (" c.setcr0((int32_t)r);" if n == "addic." else "") + " }"
+            s = f"{{ uint32_t x = {R(a)}; uint32_t r = x + {i.imm}; c.xer_ca = r < x; {R(d)} = r;"
+            return s + (" ppc_setcr0(c, (int32_t)r);" if n == "addic." else "") + " }"
         if n == "subfic":
             return (f"{{ uint32_t x = {R(a)}; uint32_t r = (uint32_t){i.imm} - x; "
-                    f"c.ca = x <= (uint32_t){i.imm}; {R(d)} = r; }}")
+                    f"c.xer_ca = x <= (uint32_t){i.imm}; {R(d)} = r; }}")
         if n == "mulli":
             return f"{R(d)} = (uint32_t)((int32_t){R(a)} * {i.imm});"
         if n == "add":
             return f"{R(d)} = {R(a)} + {R(b)};{rc0(i, R(d))}"
         if n == "addc":
-            return f"{{ uint32_t r = {R(a)} + {R(b)}; c.ca = r < {R(a)}; {R(d)} = r; }}{rc0(i, R(d))}"
+            return f"{{ uint32_t r = {R(a)} + {R(b)}; c.xer_ca = r < {R(a)}; {R(d)} = r; }}{rc0(i, R(d))}"
         if n == "adde":
-            return (f"{{ uint64_t r = (uint64_t){R(a)} + {R(b)} + c.ca; c.ca = r >> 32; "
+            return (f"{{ uint64_t r = (uint64_t){R(a)} + {R(b)} + c.xer_ca; c.xer_ca = r >> 32; "
                     f"{R(d)} = (uint32_t)r; }}{rc0(i, R(d))}")
         if n == "addze":
-            return f"{{ uint64_t r = (uint64_t){R(a)} + c.ca; c.ca = r >> 32; {R(d)} = (uint32_t)r; }}{rc0(i, R(d))}"
+            return f"{{ uint64_t r = (uint64_t){R(a)} + c.xer_ca; c.xer_ca = r >> 32; {R(d)} = (uint32_t)r; }}{rc0(i, R(d))}"
         if n == "addme":
-            return (f"{{ uint64_t r = (uint64_t){R(a)} + c.ca + 0xFFFFFFFFu; c.ca = r >> 32; "
+            return (f"{{ uint64_t r = (uint64_t){R(a)} + c.xer_ca + 0xFFFFFFFFu; c.xer_ca = r >> 32; "
                     f"{R(d)} = (uint32_t)r; }}{rc0(i, R(d))}")
         if n == "subf":
             return f"{R(d)} = {R(b)} - {R(a)};{rc0(i, R(d))}"
         if n == "subfc":
-            return (f"{{ uint32_t x = {R(a)}, y = {R(b)}; c.ca = x <= y; {R(d)} = y - x; }}"
+            return (f"{{ uint32_t x = {R(a)}, y = {R(b)}; c.xer_ca = x <= y; {R(d)} = y - x; }}"
                     f"{rc0(i, R(d))}")
         if n == "subfe":
-            return (f"{{ uint64_t r = (uint64_t)(~{R(a)}) + {R(b)} + c.ca; c.ca = r >> 32; "
+            return (f"{{ uint64_t r = (uint64_t)(~{R(a)}) + {R(b)} + c.xer_ca; c.xer_ca = r >> 32; "
                     f"{R(d)} = (uint32_t)r; }}{rc0(i, R(d))}")
         if n == "subfze":
-            return (f"{{ uint64_t r = (uint64_t)(~{R(a)}) + c.ca; c.ca = r >> 32; "
+            return (f"{{ uint64_t r = (uint64_t)(~{R(a)}) + c.xer_ca; c.xer_ca = r >> 32; "
                     f"{R(d)} = (uint32_t)r; }}{rc0(i, R(d))}")
         if n == "subfme":
-            return (f"{{ uint64_t r = (uint64_t)(~{R(a)}) + c.ca + 0xFFFFFFFFu; c.ca = r >> 32; "
+            return (f"{{ uint64_t r = (uint64_t)(~{R(a)}) + c.xer_ca + 0xFFFFFFFFu; c.xer_ca = r >> 32; "
                     f"{R(d)} = (uint32_t)r; }}{rc0(i, R(d))}")
         if n == "neg":
             return f"{R(d)} = (uint32_t)(-(int32_t){R(a)});{rc0(i, R(d))}"
@@ -212,9 +225,9 @@ class FuncEmitter:
         if n == "xoris":
             return f"{R(a)} = {R(d)} ^ 0x{i.uimm << 16:x}u;"
         if n == "andi.":
-            return f"{R(a)} = {R(d)} & 0x{i.uimm:x}u; c.setcr0((int32_t){R(a)});"
+            return f"{R(a)} = {R(d)} & 0x{i.uimm:x}u; ppc_setcr0(c, (int32_t){R(a)});"
         if n == "andis.":
-            return f"{R(a)} = {R(d)} & 0x{i.uimm << 16:x}u; c.setcr0((int32_t){R(a)});"
+            return f"{R(a)} = {R(d)} & 0x{i.uimm << 16:x}u; ppc_setcr0(c, (int32_t){R(a)});"
         if n == "extsb":
             return f"{R(a)} = (uint32_t)(int32_t)(int8_t){R(d)};{rc0(i, R(a))}"
         if n == "extsh":
@@ -229,7 +242,7 @@ class FuncEmitter:
             return f"{R(a)} = ppc_sraw(c, {R(d)}, {R(b)});{rc0(i, R(a))}"
         if n == "srawi":
             sh = i.SH
-            return (f"{{ int32_t x = (int32_t){R(d)}; c.ca = (x < 0) && (x & {(1 << sh) - 1}); "
+            return (f"{{ int32_t x = (int32_t){R(d)}; c.xer_ca = (x < 0) && (x & {(1 << sh) - 1}); "
                     f"{R(a)} = (uint32_t)(x >> {sh}); }}{rc0(i, R(a))}")
         if n == "rlwinm":
             m = mask(i.MB, i.ME)
@@ -245,13 +258,13 @@ class FuncEmitter:
         # Vergleiche
         crf = i.crfD
         if n == "cmpi":
-            return f"c.setcr({crf}, (int32_t){R(a)}, (int32_t){i.imm});"
+            return f"ppc_setcr(c, {crf}, (int32_t){R(a)}, (int32_t){i.imm});"
         if n == "cmpli":
-            return f"c.setcr_u({crf}, {R(a)}, {i.uimm}u);"
+            return f"ppc_setcr_u(c, {crf}, {R(a)}, {i.uimm}u);"
         if n == "cmp":
-            return f"c.setcr({crf}, (int32_t){R(a)}, (int32_t){R(b)});"
+            return f"ppc_setcr(c, {crf}, (int32_t){R(a)}, (int32_t){R(b)});"
         if n == "cmpl":
-            return f"c.setcr_u({crf}, {R(a)}, {R(b)});"
+            return f"ppc_setcr_u(c, {crf}, {R(a)}, {R(b)});"
 
         # Loads/Stores
         loads = {"lwz": "ld32", "lbz": "ld8", "lhz": "ld16", "lha": "lds16"}
@@ -283,17 +296,17 @@ class FuncEmitter:
         if n == "sthbrx":
             return f"st16({ea_x(i)}, bswap16((uint16_t){R(d)}));"
         if n == "lmw":
-            return f"{{ uint32_t ea = {ea_d(i)}; for (int k = {d}; k < 32; k++, ea += 4) c.r[k] = ld32(ea); }}"
+            return f"{{ uint32_t ea = {ea_d(i)}; for (int k = {d}; k < 32; k++, ea += 4) c.gpr[k] = ld32(ea); }}"
         if n == "stmw":
-            return f"{{ uint32_t ea = {ea_d(i)}; for (int k = {d}; k < 32; k++, ea += 4) st32(ea, c.r[k]); }}"
+            return f"{{ uint32_t ea = {ea_d(i)}; for (int k = {d}; k < 32; k++, ea += 4) st32(ea, c.gpr[k]); }}"
         if n in ("lswi", "stswi"):
             nb = b or 32
             fn = "ppc_lswi" if n == "lswi" else "ppc_stswi"
             return f"{fn}(c, {RA0(a)}, {d}, {nb});"
         if n == "lwarx":
-            return f"{R(d)} = ld32({ea_x(i)}); c.reserve = {ea_x(i)};"
+            return f"{R(d)} = ppc_lwarx(c, {ea_x(i)});"
         if n == "stwcx.":
-            return f"st32({ea_x(i)}, {R(d)}); c.setcr_flags(0, 2 | (c.so & 1));"
+            return f"ppc_stwcx(c, {ea_x(i)}, {R(d)});"
 
         # Float Loads/Stores
         if n in ("lfs", "lfsu", "lfsx", "lfsux"):
@@ -348,7 +361,7 @@ class FuncEmitter:
             fn = "ppc_fctiwz" if n == "fctiwz" else "ppc_fctiw"
             return f"{F(d)} = bitsf((uint64_t)(uint32_t){fn}({fb}));"
         if n in ("fcmpu", "fcmpo"):
-            return f"c.setcr_f({crf}, {fa}, {fb});"
+            return f"ppc_setcr_f(c, {crf}, {fa}, {fb});"
         if n == "mffs":
             return f"{F(d)} = bitsf((uint64_t)c.fpscr);"
         if n == "mtfsf":
@@ -378,49 +391,49 @@ class FuncEmitter:
             op = {"crxor": "x ^ y", "cror": "x | y", "crand": "x & y", "crnor": "!(x | y)",
                   "creqv": "!(x ^ y)", "crandc": "x & !y", "crorc": "x | !y",
                   "crnand": "!(x & y)"}[n]
-            return (f"{{ uint32_t x = (c.cr >> {31 - a}) & 1, y = (c.cr >> {31 - b}) & 1; "
-                    f"c.setcrbit({d}, ({op}) & 1); }}")
+            return (f"{{ uint32_t x = c.cr[{a}], y = c.cr[{b}]; "
+                    f"ppc_setcrbit(c, {d}, ({op}) & 1); }}")
         if n == "mcrf":
-            return f"c.setcr_flags({crf}, (c.cr >> {28 - 4 * i.crfS}) & 0xF);"
+            return f"ppc_mcrf(c, {crf}, {i.crfS});"
         if n == "mfcr":
-            return f"{R(d)} = c.cr;"
+            return f"{R(d)} = ppc_get_cr(c);"
         if n == "mtcrf":
             crm = (i.raw >> 12) & 0xFF
             m = 0
             for k in range(8):
                 if crm & (1 << (7 - k)):
                     m |= 0xF << (28 - 4 * k)
-            return f"c.cr = (c.cr & 0x{~m & 0xFFFFFFFF:08x}u) | ({R(d)} & 0x{m:08x}u);"
+            return f"ppc_set_cr(c, (ppc_get_cr(c) & 0x{~m & 0xFFFFFFFF:08x}u) | ({R(d)} & 0x{m:08x}u));"
 
         # SPRs
         if n == "mfspr":
             spr = i.spr
             if spr == 8:
-                return f"{R(d)} = c.lr;"
+                return f"{R(d)} = c.spr.LR;"
             if spr == 9:
-                return f"{R(d)} = c.ctr;"
+                return f"{R(d)} = c.spr.CTR;"
             if spr == 1:
-                return f"{R(d)} = c.get_xer();"
+                return f"{R(d)} = ppc_get_xer(c);"
             if 912 <= spr <= 919:
-                return f"{R(d)} = c.gqr[{spr - 912}];"
+                return f"{R(d)} = c.spr.UGQR[{spr - 912}];"
             return f"{R(d)} = ppc_mfspr(c, {spr});"
         if n == "mtspr":
             spr = i.spr
             if spr == 8:
-                return f"c.lr = {R(d)};"
+                return f"c.spr.LR = {R(d)};"
             if spr == 9:
-                return f"c.ctr = {R(d)};"
+                return f"c.spr.CTR = {R(d)};"
             if spr == 1:
-                return f"c.set_xer({R(d)});"
+                return f"ppc_set_xer(c, {R(d)});"
             if 912 <= spr <= 919:
-                return f"c.gqr[{spr - 912}] = {R(d)};"
+                return f"c.spr.UGQR[{spr - 912}] = {R(d)};"
             return f"ppc_mtspr(c, {spr}, {R(d)});"
         if n == "mftb":
             return f"{R(d)} = ppc_mftb({i.spr});"
         if n == "mfmsr":
-            return f"{R(d)} = c.msr;"
+            return f"{R(d)} = ppc_get_msr(c);"
         if n == "mtmsr":
-            return f"c.msr = {R(d)};"
+            return f"ppc_set_msr(c, {R(d)});"
 
         # Cache/Sync = nichts zu tun
         if n in ("sync", "isync", "eieio", "dcbst", "dcbf", "dcbt", "dcbtst", "dcbi", "icbi"):
@@ -476,9 +489,9 @@ class FuncEmitter:
         if n in table:
             return both(*table[n])
         if n in ("ps_cmpu0", "ps_cmpo0"):
-            return f"c.setcr_f({i.crfD}, {fa}, {fb});"
+            return f"ppc_setcr_f(c, {i.crfD}, {fa}, {fb});"
         if n in ("ps_cmpu1", "ps_cmpo1"):
-            return f"c.setcr_f({i.crfD}, {pa}, {pb});"
+            return f"ppc_setcr_f(c, {i.crfD}, {pa}, {pb});"
         return None
 
     def emit(self):
@@ -585,6 +598,11 @@ def generate(rpx, out_dir, funcs_per_file=1500, only=None, log=print):
             f.write(f"  {{0x{a:08x}u, fn_{a:08x}}},\n")
         f.write("};\n")
         f.write(f"const size_t g_func_count = {len(rpx.func_syms)};\n\n")
+        # Erster Befehl jeder Funktion (nach Relocation) - Cemu prueft damit die Ladeadresse
+        f.write("extern const uint32_t g_func_firstword[];\nconst uint32_t g_func_firstword[] = {\n")
+        for a, _ in rpx.func_syms:
+            f.write(f"  0x{rpx.read32(a):08x}u,\n")
+        f.write("};\n\n")
         f.write("const ImportEntry g_import_table[] = {\n")
         for addr, imp in sorted(rpx.imports.items()):
             f.write(f'  {{0x{addr:08x}u, "{imp.lib}", "{imp.name}", {str(imp.is_func).lower()}}},\n')

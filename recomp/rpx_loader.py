@@ -48,6 +48,7 @@ class Rpx:
     reloc_stats: dict
     text_refs: set = field(default_factory=set)
     branch_fixups: dict = field(default_factory=dict)   # Befehlsadresse -> echtes Sprungziel (Imports)
+    import_imm_sites: dict = field(default_factory=dict)  # Befehlsadresse -> 'ha'/'hi'/'lo' (Immediate zeigt auf Import)
     sda_base: int = 0
     sda2_base: int = 0
     stack_size: int = 0x100000
@@ -118,6 +119,8 @@ def load(path) -> Rpx:
     text_sec = secs[text_idx]
     text_refs = set()
     branch_fixups = {}
+    import_imm_sites = {}
+    import_secs = {s.idx for s in secs if s.type == SHT_RPL_IMPORTS}
     for rs in secs:
         if rs.type != SHT_RELA:
             continue
@@ -132,6 +135,8 @@ def load(path) -> Rpx:
             loc = r_off - target.addr
             buf = target.data
             stats[rtype] = stats.get(rtype, 0) + 1
+            if target is text_sec and syms[sidx][4] in import_secs and rtype in (4, 5, 6):
+                import_imm_sites[r_off - 2] = {4: "lo", 5: "hi", 6: "ha"}[rtype]
             if rtype in (R_PPC_ADDR32,):
                 struct.pack_into(">I", buf, loc, v)
                 if text_sec.addr <= v < text_sec.addr + text_sec.size:
@@ -168,7 +173,7 @@ def load(path) -> Rpx:
         if shn == text_idx and t == 2:
             text_refs.add(val)
 
-    rpx = Rpx(entry, secs, func_syms, imports, stats, text_refs, branch_fixups)
+    rpx = Rpx(entry, secs, func_syms, imports, stats, text_refs, branch_fixups, import_imm_sites)
     fi = next((s for s in secs if s.type == 0x80000004), None)
     if fi and len(fi.data) >= 0x30:
         rpx.sda_base, rpx.sda2_base, rpx.stack_size = struct.unpack_from(">III", fi.data, 0x24)
