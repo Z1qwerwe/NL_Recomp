@@ -291,25 +291,25 @@ static void update_cursor() {
 
 // Bildflaechen fuer TV + GamePad in einem Fenster
 static void screens_layout(int w, int h, bool drc_big, int* tv, int* drc) {
-    int big[4], small[4];
+    int bg[4], sml[4];
     if (g_nl.screen_layout == 2) {
         // nebeneinander: grosses Bild 2/3, kleines 1/3 der Breite
         int u = std::min(w / 3, h * 16 / 18);
         int bw = 2 * u, bh = bw * 9 / 16, sw = u, sh = sw * 9 / 16;
         int x0 = (w - bw - sw) / 2;
-        big[0] = x0; big[1] = (h - bh) / 2; big[2] = bw; big[3] = bh;
-        small[0] = x0 + bw; small[1] = (h - sh) / 2; small[2] = sw; small[3] = sh;
+        bg[0] = x0; bg[1] = (h - bh) / 2; bg[2] = bw; bg[3] = bh;
+        sml[0] = x0 + bw; sml[1] = (h - sh) / 2; sml[2] = sw; sml[3] = sh;
     } else {
         // Bild-in-Bild: grosses Bild fuellt das Fenster, kleines unten rechts
         int bw = w, bh = w * 9 / 16;
         if (bh > h) { bh = h; bw = h * 16 / 9; }
-        big[0] = (w - bw) / 2; big[1] = (h - bh) / 2; big[2] = bw; big[3] = bh;
+        bg[0] = (w - bw) / 2; bg[1] = (h - bh) / 2; bg[2] = bw; bg[3] = bh;
         int sw = bw * std::clamp(g_nl.pip_size, 15, 60) / 100, sh = sw * 9 / 16, m = bw / 60;
-        small[0] = big[0] + bw - sw - m; small[1] = big[1] + bh - sh - m; small[2] = sw; small[3] = sh;
+        sml[0] = bg[0] + bw - sw - m; sml[1] = bg[1] + bh - sh - m; sml[2] = sw; sml[3] = sh;
     }
     for (int k = 0; k < 4; k++) {
-        tv[k] = drc_big ? small[k] : big[k];
-        drc[k] = drc_big ? big[k] : small[k];
+        tv[k] = drc_big ? sml[k] : bg[k];
+        drc[k] = drc_big ? bg[k] : sml[k];
         g_nl_screens.drc_rect[k] = drc[k];
     }
 }
