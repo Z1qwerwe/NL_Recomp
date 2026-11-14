@@ -62,6 +62,16 @@ static NLPadSnapshot s_snap;
 static std::atomic<bool> s_menu_btn_edge{false};
 static bool s_menu_btn_last = false;
 
+// Virtuelles Neigen des GamePads: 0..1 wie Cemus Maus-Gyro (0.5 = gerade)
+extern bool (*g_nl_virtual_gyro)(float& wx, float& wy);
+static std::atomic<float> s_gyro_wx{0.5f}, s_gyro_wy{0.5f};
+static bool gyro_hook(float& wx, float& wy) {
+    if (!g_nl.free_camera || g_nl_menu_open) return false;
+    wx = s_gyro_wx;
+    wy = s_gyro_wy;
+    return true;
+}
+
 // Maus (vom Fenster-Thread geschrieben)
 static std::atomic<int> s_mouse_dx{0}, s_mouse_dy{0};
 static std::atomic<bool> s_touch_down{false};
@@ -358,11 +368,29 @@ public:
         out.rotation = {val("RS_RIGHT") - val("RS_LEFT"), val("RS_UP") - val("RS_DOWN")};
         // Maus-Kamera: Bewegung seit der letzten Abfrage wirkt wie der rechte Stick
         int dx = s_mouse_dx.exchange(0), dy = s_mouse_dy.exchange(0);
-        if (g_nl.mouse_camera && !nl_mouse_pointer_mode()) {
+        const bool mouse_active = g_nl.mouse_camera && !nl_mouse_pointer_mode();
+        if (g_nl.free_camera) {
+            // Freie Kamera: Maus und rechter Stick neigen das virtuelle GamePad (hoch/runter/links/rechts)
+            float wx = s_gyro_wx, wy = s_gyro_wy;
+            const float inv = g_nl.mouse_invert_y ? -1.0f : 1.0f;
+            if (mouse_active) {
+                const float km = 0.0006f * g_nl.mouse_sens / 100.0f;
+                wx += dx * km;
+                wy += dy * km * inv;
+            }
+            const float ks = 0.010f * g_nl.stick_camera_speed / 100.0f;
+            wx += out.rotation.x * ks;
+            wy -= out.rotation.y * ks * inv;
+            // zentrieren: Z, mittlere Maustaste oder Touchpad/Share am Controller
+            if (nl_key_down('Z') || nl_key_down(VK_MBUTTON) || (pad.buttons.GetButtonState(P_TOUCHPAD))) wx = wy = 0.5f;
+            s_gyro_wx = std::clamp(wx, 0.02f, 0.98f);
+            s_gyro_wy = std::clamp(wy, 0.10f, 0.90f);
+        }
+        if (mouse_active) {
             const float k = 0.30f * g_nl.mouse_sens / 100.0f;
             const float ky = g_nl.mouse_invert_y ? -k : k;
             out.rotation.x = std::clamp(out.rotation.x + dx * k, -1.0f, 1.0f);
-            out.rotation.y = std::clamp(out.rotation.y - dy * ky, -1.0f, 1.0f);
+            if (!g_nl.free_camera) out.rotation.y = std::clamp(out.rotation.y - dy * ky, -1.0f, 1.0f);
         }
         return out;
     }
@@ -397,6 +425,7 @@ void nl_input_init(const std::filesystem::path& controls_path) {
     s_path = controls_path;
     load_bindings();
     s_nl_controller = std::make_shared<NLInputController>();
+    g_nl_virtual_gyro = gyro_hook;
     apply_mapping();
 }
 

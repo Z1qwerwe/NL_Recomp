@@ -68,6 +68,8 @@ void nl_settings_load(const std::filesystem::path& path) {
         else if (k == "mouse_camera") n.mouse_camera = v != 0;
         else if (k == "mouse_sens2") n.mouse_sens = std::clamp(v, 10, 1000);
         else if (k == "mouse_invert_y") n.mouse_invert_y = v != 0;
+        else if (k == "free_camera") n.free_camera = v != 0;
+        else if (k == "stick_camera_speed") n.stick_camera_speed = std::clamp(v, 10, 400);
         else if (k == "button_layout2") n.button_layout = std::clamp(v, 0, 2);
     }
     s_startup = g_nl;
@@ -84,7 +86,8 @@ void nl_settings_save() {
       << "\nasync_shaders=" << n.async_shaders << "\nstart_view=" << n.start_view << "\nvolume=" << n.volume
       << "\npad_volume=" << n.pad_volume << "\nmic=" << n.mic << "\nmic_volume=" << n.mic_volume
       << "\nbutton_layout2=" << n.button_layout << "\ndeadzone=" << n.deadzone << "\nscreen_layout=" << n.screen_layout
-      << "\npip_size=" << n.pip_size << "\nmouse_camera=" << n.mouse_camera << "\nmouse_sens2=" << n.mouse_sens << "\nmouse_invert_y=" << n.mouse_invert_y << "\n";
+      << "\npip_size=" << n.pip_size << "\nmouse_camera=" << n.mouse_camera << "\nmouse_sens2=" << n.mouse_sens << "\nmouse_invert_y=" << n.mouse_invert_y << "\nfree_camera=" << n.free_camera
+      << "\nstick_camera_speed=" << n.stick_camera_speed << "\n";
     GetConfigHandle().Save();
 }
 
@@ -259,6 +262,11 @@ static std::vector<Row> build_tab(int tab) {
             nl_input_save();
             save_later();
         };
+        rows.push_back(onoff("Freie Kamera (statt Neigen)", "Im Original zielt und schaut man oft, indem man das GamePad neigt. "
+                             "Hier uebernehmen Maus und rechter Stick das: hoch, runter, links, rechts. "
+                             "Z, mittlere Maustaste oder das Touchpad am Controller zentriert die Kamera wieder.", &n.free_camera, d.free_camera));
+        rows.push_back(percent("Stick-Kamera-Tempo", "Wie schnell der rechte Stick die Kamera dreht (freie Kamera).", &n.stick_camera_speed,
+                               d.stick_camera_speed, 10, 400, 10));
         rows.push_back(onoff("Maus-Kamera", "Klick ins grosse Spielbild faengt die Maus ein: dann dreht sie die Kamera wie der rechte Stick und der Zeiger ist weg. "
                              "Esc oder Alt gibt sie wieder frei. Ein Klick aufs GamePad-Bild ist immer ein Touch.", &n.mouse_camera, d.mouse_camera));
         rows.push_back(percent("Maus-Empfindlichkeit", "Wie schnell sich die Kamera mit der Maus dreht.", &n.mouse_sens, d.mouse_sens, 10, 1000, 10));

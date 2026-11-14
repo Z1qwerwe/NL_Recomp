@@ -151,6 +151,28 @@ def patch(cemu_dir, log):
     csys = os.path.join(cemu_dir, "src", "Cafe", "CafeSystem.cpp")
     _patch_file(csys, 'cemuLog_log(LogType::Force, "------- Init {} -------", BUILD_VERSION_WITH_NAME_STRING);',
                 'cemuLog_log(LogType::Force, "------- Init NL-Engine (Nintendo Land Recomp) -------");', log)
+    # 7. Virtuelles GamePad-Neigen (Maus/rechter Stick) statt Rechtsklick-Ziehen
+    vp = os.path.join(cemu_dir, "src", "input", "emulated", "VPADController.cpp")
+    _patch_file(vp, '#include "input/emulated/VPADController.h"\n',
+                '#include "input/emulated/VPADController.h"\n'
+                'bool (*g_nl_virtual_gyro)(float& wx, float& wy) = nullptr; // Nintendo Land Recomp\n', log)
+    _patch_file(vp,
+                "\tif (const auto right_mouse = input_manager.get_right_down_mouse_info(&pad_view))\n\t{\n"
+                "\t\tconst Vector2<float> mousePos(right_mouse->x, right_mouse->y);\n\n"
+                "\t\tint w, h;\n\t\tif (pad_view)\n\t\t\tWindowSystem::GetPadWindowPhysSize(w, h);\n\t\telse\n"
+                "\t\t\tWindowSystem::GetWindowPhysSize(w, h);\n\n"
+                "\t\tfloat wx = mousePos.x / w;\n\t\tfloat wy = mousePos.y / h;\n",
+                "\t// Nintendo Land Recomp: virtuelles Neigen (Maus/rechter Stick) hat Vorrang\n"
+                "\tfloat nl_wx = 0.5f, nl_wy = 0.5f;\n"
+                "\tconst bool nl_gyro = g_nl_virtual_gyro && g_nl_virtual_gyro(nl_wx, nl_wy);\n"
+                "\tconst auto right_mouse = nl_gyro ? std::optional<glm::ivec2>() : input_manager.get_right_down_mouse_info(&pad_view);\n"
+                "\tif (nl_gyro || right_mouse)\n\t{\n"
+                "\t\tfloat wx = nl_wx, wy = nl_wy;\n"
+                "\t\tif (!nl_gyro)\n\t\t{\n"
+                "\t\t\tconst Vector2<float> mousePos(right_mouse->x, right_mouse->y);\n"
+                "\t\t\tint w, h;\n\t\t\tif (pad_view)\n\t\t\t\tWindowSystem::GetPadWindowPhysSize(w, h);\n\t\t\telse\n"
+                "\t\t\t\tWindowSystem::GetWindowPhysSize(w, h);\n"
+                "\t\t\twx = mousePos.x / w;\n\t\t\twy = mousePos.y / h;\n\t\t}\n", log)
     fu = os.path.join(cemu_dir, "src", "util", "Fiber", "FiberUnix.cpp")
     if os.path.isfile(fu):
         _patch_file(fu, "const size_t stackSize = 2 * 1024 * 1024;",

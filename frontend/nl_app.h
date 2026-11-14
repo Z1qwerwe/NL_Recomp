@@ -36,6 +36,8 @@ struct NLSettings {
     bool mouse_camera = true;    // Maus dreht die Kamera (rechter Stick), Zeiger versteckt
     int mouse_sens = 100;        // Prozent
     bool mouse_invert_y = false; // Maus hoch = nach unten schauen
+    bool free_camera = true;     // Maus + rechter Stick simulieren das Neigen des GamePads (freie Kamera)
+    int stick_camera_speed = 100;// Prozent, wie schnell der rechte Stick neigt
     int deadzone = 20;           // Prozent
 };
 extern NLSettings g_nl;
