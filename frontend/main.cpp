@@ -480,10 +480,12 @@ int main(int argc, char* argv[]) {
     if (fs::exists(ActiveSettings::GetConfigPath("settings.xml"), ec))
         GetConfigHandle().Load();
     NetworkConfig::LoadOnce();
+    const bool det = nl_det_init();   // deterministischer Modus (Test fuer Netplay)
     auto& config = GetConfig();
     config.graphic_api = GraphicAPI::kVulkan;
     config.vsync = g_nl.vsync;
     config.async_compile = g_nl.async_shaders;
+    if (det) config.gx2drawdone_sync = true;
     config.console_language = (CafeConsoleLanguage)g_nl.language;
     nl_settings_apply_live();
     GetConfigHandle().Save();

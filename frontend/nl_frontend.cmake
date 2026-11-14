@@ -2,7 +2,7 @@
 # Nutzt Cemus Kern-Bibliotheken (OS, Grafik, Audio, Eingabe) ohne Cemus Oberflaeche.
 set(NL_FRONTEND_DIR ${CMAKE_CURRENT_LIST_DIR})
 
-add_executable(NintendoLand ${NL_FRONTEND_DIR}/main.cpp ${NL_FRONTEND_DIR}/nl_input.cpp ${NL_FRONTEND_DIR}/nl_menu.cpp)
+add_executable(NintendoLand ${NL_FRONTEND_DIR}/main.cpp ${NL_FRONTEND_DIR}/nl_input.cpp ${NL_FRONTEND_DIR}/nl_menu.cpp ${NL_FRONTEND_DIR}/nl_det.cpp)
 target_precompile_headers(NintendoLand PRIVATE "${CMAKE_SOURCE_DIR}/src/Common/precompiled.h")
 target_include_directories(NintendoLand PRIVATE ${CMAKE_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/src/gui/interface)
 

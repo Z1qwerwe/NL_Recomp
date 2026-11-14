@@ -98,6 +98,11 @@ void nl_menu_install();
 void nl_menu_toggle();
 
 // ---------------------------------------------------------------------------
+// Deterministischer Modus (nl_det.cpp), Grundlage fuer Netplay
+// ---------------------------------------------------------------------------
+bool nl_det_init();   // NL_DET=1 -> an
+
+// ---------------------------------------------------------------------------
 // Fenster (main.cpp) - Auftraege an den Fenster-Thread
 // ---------------------------------------------------------------------------
 enum class NLRequest { SaveSettings, ApplyFullscreen, Restart, Quit };

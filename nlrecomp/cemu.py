@@ -173,6 +173,86 @@ def patch(cemu_dir, log):
                 "\t\t\tint w, h;\n\t\t\tif (pad_view)\n\t\t\t\tWindowSystem::GetPadWindowPhysSize(w, h);\n\t\t\telse\n"
                 "\t\t\t\tWindowSystem::GetWindowPhysSize(w, h);\n"
                 "\t\t\twx = mousePos.x / w;\n\t\t\twy = mousePos.y / h;\n\t\t}\n", log)
+    # 8. Deterministischer Modus (Netplay): virtuelle Uhr statt echter Zeit, alles auf einem Kern
+    src = os.path.join(cemu_dir, "src")
+    EXT = ("extern bool g_nl_det; extern std::atomic<uint64> g_nl_vclock; "
+           "extern void (*g_nl_det_tick)(); extern void (*g_nl_det_idle)(); // Nintendo Land Recomp\n")
+    tm = os.path.join(src, "Cafe", "HW", "Espresso", "PPCTimer.cpp")
+    _patch_file(tm, "FSpinlock sTimerSpinlock;\n",
+                "FSpinlock sTimerSpinlock;\n"
+                "// Nintendo Land Recomp: deterministischer Modus\n"
+                "bool g_nl_det = false;\nstd::atomic<uint64> g_nl_vclock{0};\n"
+                "uint64 g_nl_det_epoch = 820454400; // Sekunden seit 2000 (1.1.2026), vom Host vorgegeben\n"
+                "void (*g_nl_det_tick)() = nullptr;\nvoid (*g_nl_det_idle)() = nullptr;\n", log)
+    _patch_file(tm, "uint64 PPCTimer_getFromRDTSC()\n{\n",
+                "uint64 PPCTimer_getFromRDTSC()\n{\n\tif (g_nl_det) return g_nl_vclock.load(std::memory_order_relaxed); // Nintendo Land Recomp\n", log)
+    th = os.path.join(src, "Cafe", "OS", "libs", "coreinit", "coreinit_Thread.cpp")
+    _patch_file(th, '#include "Cafe/OS/common/OSCommon.h"\n', '#include "Cafe/OS/common/OSCommon.h"\n' + EXT, log)
+    _patch_file(th, "\t\tthread->totalCycles += (uint64)executedCycles;\n",
+                "\t\tthread->totalCycles += (uint64)executedCycles;\n"
+                "\t\tif (g_nl_det) g_nl_vclock.fetch_add((uint64)executedCycles); // Nintendo Land Recomp: virtuelle Uhr\n", log)
+    _patch_file(th, "\t\t// AX update\n\t\tsnd_core::AXOut_update();\n",
+                "\t\tif (g_nl_det && g_nl_det_tick) g_nl_det_tick(); // Nintendo Land Recomp: VSync usw. nach virtueller Uhr\n"
+                "\t\t// AX update\n\t\tsnd_core::AXOut_update();\n", log)
+    _patch_file(th, "\t\t\t\t__OSCheckSystemEvents();\n\t\t\t\tif(g_isMulticoreMode == false)\n\t\t\t\t\tcoreIndex = (coreIndex + 1) % 3;\n",
+                "\t\t\t\t__OSCheckSystemEvents();\n\t\t\t\tif(g_isMulticoreMode == false)\n\t\t\t\t\tcoreIndex = (coreIndex + 1) % 3;\n"
+                "\t\t\t\t// Nintendo Land Recomp: nichts zu tun -> virtuelle Uhr vorspulen\n"
+                "\t\t\t\tif (g_nl_det && g_nl_det_idle && g_coreRunQueueThreadCount[0].isZero() && g_coreRunQueueThreadCount[1].isZero() && g_coreRunQueueThreadCount[2].isZero())\n"
+                "\t\t\t\t\tg_nl_det_idle();\n", log)
+    ax = os.path.join(src, "Cafe", "OS", "libs", "snd_core", "ax_out.cpp")
+    _patch_file(ax, '#include "Cafe/OS/libs/snd_core/ax.h"\n', '#include "Cafe/OS/libs/snd_core/ax.h"\n' + EXT, log)
+    _patch_file(ax, "\tvoid AXOut_update()\n\t{\n",
+                "\tvoid AXOut_update()\n\t{\n"
+                "\t\tif (g_nl_det) // Nintendo Land Recomp: Audio-Takt alle 3 ms virtueller Zeit\n\t\t{\n"
+                "\t\t\tstatic uint64 s_nl_next = 0;\n\t\t\tconst uint64 step = 1243125000ull * 3 / 1000;\n"
+                "\t\t\tconst uint64 now = g_nl_vclock.load();\n\t\t\tif (s_nl_next == 0) s_nl_next = now + step;\n"
+                "\t\t\tif (now < s_nl_next) return;\n\t\t\ts_nl_next += step;\n"
+                "\t\t\tif (snd_core::isInitialized() && numQueuedFramesSndGeneric == snd_core::getNumProcessedFrames())\n\t\t\t{\n"
+                "\t\t\t\tAXOut_updateDevicePlayState(true);\n\t\t\t\tsnd_core::AXIst_QueueFrame();\n\t\t\t\tnumQueuedFramesSndGeneric++;\n\t\t\t}\n"
+                "\t\t\treturn;\n\t\t}\n", log)
+    lt = os.path.join(src, "Cafe", "HW", "Latte", "Core", "LatteTiming.cpp")
+    _patch_file(lt, '#include "Cafe/OS/libs/gx2/GX2_Event.h"\n', '#include "Cafe/OS/libs/gx2/GX2_Event.h"\n' + EXT, log)
+    _patch_file(lt, "void LatteTiming_signalVsync()\n{\n",
+                "static thread_local bool t_nl_det_vsync = false; // Nintendo Land Recomp\n"
+                "void LatteTiming_signalVsync();\n"
+                "void NL_Det_SignalVsync() { t_nl_det_vsync = true; LatteTiming_signalVsync(); t_nl_det_vsync = false; }\n"
+                "void LatteTiming_signalVsync()\n{\n"
+                "\tif (g_nl_det && !t_nl_det_vsync) return; // im deterministischen Modus nur nach virtueller Uhr\n", log)
+    _patch_file(lt, "\t\t\telse\n\t\t\t{\n\t\t\t\t// old code for all other games\n",
+                "\t\t\telse if (g_nl_det) // Nintendo Land Recomp: Flip nach Anfragen des Spiels, nicht nach GPU-Fortschritt\n\t\t\t{\n"
+                "\t\t\t\tuint32 req = _swapEndianU32(LatteGPUState.sharedArea->flipRequestCountBE);\n"
+                "\t\t\t\tuint32 exe = _swapEndianU32(LatteGPUState.sharedArea->flipExecuteCountBE);\n"
+                "\t\t\t\tif (exe != req)\n\t\t\t\t\tLatteGPUState.sharedArea->flipExecuteCountBE = _swapEndianU32(exe + 1);\n\t\t\t}\n"
+                "\t\t\telse\n\t\t\t{\n\t\t\t\t// old code for all other games\n", log)
+    ipc = os.path.join(src, "Cafe", "OS", "libs", "coreinit", "coreinit_IPC.cpp")
+    _patch_file(ipc, '#include "coreinit_MessageQueue.h"\n',
+                '#include "coreinit_MessageQueue.h"\n' + EXT +
+                "#include <set>\n// Nintendo Land Recomp: offene IPC-Anfragen im deterministischen Modus\n"
+                "static std::mutex s_nl_ipc_mtx;\nstatic std::set<const void*> s_nl_ipc_pending, s_nl_ipc_long;\n"
+                "bool NL_IPC_AnyPending() { std::lock_guard l(s_nl_ipc_mtx); return !s_nl_ipc_pending.empty(); }\n", log)
+    _patch_file(ipc, "\t\tiosu::kernel::IPCSubmitFromCOS(coreIndex, command);\n\t}\n",
+                "\t\tif (g_nl_det) { std::lock_guard l(s_nl_ipc_mtx); s_nl_ipc_pending.insert(command); }\n"
+                "\t\tiosu::kernel::IPCSubmitFromCOS(coreIndex, command);\n"
+                "\t\tif (g_nl_det) // Nintendo Land Recomp: auf die Antwort warten (max. 100 ms), damit sie an fester Stelle ankommt\n\t\t{\n"
+                "\t\t\tauto t0 = std::chrono::steady_clock::now();\n\t\t\twhile (true)\n\t\t\t{\n"
+                "\t\t\t\t{\n\t\t\t\t\tstd::lock_guard l(s_nl_ipc_mtx);\n\t\t\t\t\tif (!s_nl_ipc_pending.count(command)) break;\n"
+                "\t\t\t\t\tif (std::chrono::steady_clock::now() - t0 > std::chrono::milliseconds(100)) { s_nl_ipc_pending.erase(command); s_nl_ipc_long.insert(command); break; }\n"
+                "\t\t\t\t}\n\t\t\t\tstd::this_thread::yield();\n\t\t\t}\n\t\t}\n\t}\n", log)
+    _patch_file(ipc, "\t\tIPCDriver_KernelCallback(ipcDriver);\n\n\t\tlock.lock();\n",
+                "\t\tIPCDriver_KernelCallback(ipcDriver);\n"
+                "\t\tif (g_nl_det) { std::lock_guard l(s_nl_ipc_mtx); for (uint32 i = 0; i < numResponses; i++) if (!s_nl_ipc_pending.erase(responseArray[i])) s_nl_ipc_long.erase(responseArray[i]); } // Nintendo Land Recomp\n"
+                "\n\t\tlock.lock();\n", log)
+    acs = os.path.join(src, "config", "ActiveSettings.cpp")
+    _patch_file(acs, "CPUMode ActiveSettings::GetCPUMode()\n{\n",
+                "extern bool g_nl_det; // Nintendo Land Recomp\nCPUMode ActiveSettings::GetCPUMode()\n{\n"
+                "\tif (g_nl_det) return CPUMode::SinglecoreRecompiler; // deterministischer Modus: ein Kern\n", log)
+    cs2 = os.path.join(src, "Cafe", "CafeSystem.cpp")
+    _patch_file(cs2, "\tppcCyclesSince2000TimerClock = ppcCyclesSince2000 / 20ULL;\n\tPPCTimer_start();\n",
+                "\tppcCyclesSince2000TimerClock = ppcCyclesSince2000 / 20ULL;\n"
+                "\t{ extern bool g_nl_det; extern uint64 g_nl_det_epoch; // Nintendo Land Recomp: feste Uhrzeit fuer alle Spieler\n"
+                "\t\tif (g_nl_det) { ppcCyclesSince2000 = ppcCyclesSince2000_UTC = g_nl_det_epoch * (uint64)ESPRESSO_CORE_CLOCK; "
+                "ppcCyclesSince2000TimerClock = ppcCyclesSince2000 / 20ULL; } }\n"
+                "\tPPCTimer_start();\n", log)
     fu = os.path.join(cemu_dir, "src", "util", "Fiber", "FiberUnix.cpp")
     if os.path.isfile(fu):
         _patch_file(fu, "const size_t stackSize = 2 * 1024 * 1024;",
