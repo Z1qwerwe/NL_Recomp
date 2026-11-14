@@ -112,6 +112,12 @@ def patch(cemu_dir, log):
                 "add_subdirectory(src)\n",
                 "add_subdirectory(src)\n\n" + MARK + "\nif (NL_AOT_DIR)\n"
                 "\tinclude(\"${NL_AOT_DIR}/nl_aot.cmake\")\nendif()\n", log)
+    # 1b. Keine Link-Time-Optimierung: der MSVC-Linker stuerzt bei unserer Programmgroesse sonst ab (LNK1000)
+    #     und braucht ewig. Der generierte Spielcode hatte sie ohnehin schon aus.
+    _patch_file(os.path.join(cemu_dir, "CMakeLists.txt"),
+                "set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE ON)\nset(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO ON)\n",
+                "set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE OFF) # Nintendo Land Recomp\n"
+                "set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO OFF)\n", log)
     # 2. Nach dem Laden und Linken der RPX die nativen Funktionen aktivieren
     cs = os.path.join(cemu_dir, "src", "Cafe", "CafeSystem.cpp")
     _patch_file(cs, "\tRPLLoader_Link();\n",
