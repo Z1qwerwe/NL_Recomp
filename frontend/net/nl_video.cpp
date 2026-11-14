@@ -295,7 +295,7 @@ void NLVideoEncoder::worker() {
         IMFSample* own = nullptr;
         if (!provides) {
             IMFMediaBuffer* buf = nullptr;
-            DWORD size = std::max<DWORD>(info.cbSize, (DWORD)(m_w * m_h * 2));
+            DWORD size = (std::max)<DWORD>(info.cbSize, (DWORD)(m_w * m_h * 2));
             if (FAILED(MFCreateMemoryBuffer(size, &buf))) return false;
             MFCreateSample(&own);
             own->AddBuffer(buf);
@@ -527,7 +527,7 @@ bool NLVideoDecoder::decode(const uint8_t* data, size_t size, uint64_t t_us, std
         MFT_OUTPUT_STREAM_INFO info{};
         mft->GetOutputStreamInfo(0, &info);
         IMFMediaBuffer* ob_buf = nullptr;
-        DWORD need = std::max<DWORD>(info.cbSize, (DWORD)(std::max(m_stride, m_w) * std::max(m_alloc_h, m_h) * 3 / 2));
+        DWORD need = (std::max)<DWORD>(info.cbSize, (DWORD)((std::max)(m_stride, m_w) * (std::max)(m_alloc_h, m_h) * 3 / 2));
         if (FAILED(MFCreateMemoryBuffer(need, &ob_buf))) break;
         IMFSample* os = nullptr;
         MFCreateSample(&os);

@@ -592,7 +592,7 @@ static std::vector<NLFriend> s_friends;
 static clk::time_point s_friends_time{};
 
 static void ui_home(ImVec2 size, ImFont* big) {
-    const float pw = std::min(1100.0f, size.x - 60), ph = std::min(640.0f, size.y - 60);
+    const float pw = (std::min)(1100.0f, size.x - 60), ph = (std::min)(640.0f, size.y - 60);
     ImGui::SetNextWindowPos(ImVec2((size.x - pw) / 2, (size.y - ph) / 2));
     ImGui::SetNextWindowSize(ImVec2(pw, ph));
     ImGui::Begin("##home", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings);
@@ -665,7 +665,7 @@ static void ui_home(ImVec2 size, ImFont* big) {
 }
 
 static void ui_message(ImVec2 size, ImFont* big, const std::string& title, const std::string& text, bool cancel, bool back) {
-    const float pw = std::min(720.0f, size.x - 60), ph = 300;
+    const float pw = (std::min)(720.0f, size.x - 60), ph = 300;
     ImGui::SetNextWindowPos(ImVec2((size.x - pw) / 2, (size.y - ph) / 2));
     ImGui::SetNextWindowSize(ImVec2(pw, ph));
     ImGui::Begin("##msg", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings);
@@ -687,7 +687,7 @@ static void ui_playing(ImVec2 size, ImFont* big) {
     ImDrawList* bg = ImGui::GetBackgroundDrawList();
     bg->AddRectFilled(ImVec2(0, 0), size, col(0, 0, 0));
     if (s_srv && s_tex_w > 0) {
-        float scale = std::min(size.x / s_tex_w, size.y / s_tex_h);
+        float scale = (std::min)(size.x / s_tex_w, size.y / s_tex_h);
         float w = s_tex_w * scale, h = s_tex_h * scale;
         ImVec2 p0((size.x - w) / 2, (size.y - h) / 2);
         bg->AddImage((ImTextureID)s_srv, p0, ImVec2(p0.x + w, p0.y + h));
