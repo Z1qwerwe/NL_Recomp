@@ -175,7 +175,7 @@ def patch(cemu_dir, log):
                 "\t\t\twx = mousePos.x / w;\n\t\t\twy = mousePos.y / h;\n\t\t}\n", log)
     # 8. Deterministischer Modus (Netplay): virtuelle Uhr statt echter Zeit, alles auf einem Kern
     src = os.path.join(cemu_dir, "src")
-    EXT = ("extern bool g_nl_det; extern std::atomic<uint64> g_nl_vclock; "
+    EXT = ("extern bool g_nl_det; extern std::atomic<uint64> g_nl_vclock; extern std::atomic<uint64> g_nl_cnt[8]; "
            "extern void (*g_nl_det_tick)(); extern void (*g_nl_det_idle)(); // Nintendo Land Recomp\n")
     tm = os.path.join(src, "Cafe", "HW", "Espresso", "PPCTimer.cpp")
     _patch_file(tm, "FSpinlock sTimerSpinlock;\n",
@@ -183,7 +183,8 @@ def patch(cemu_dir, log):
                 "// Nintendo Land Recomp: deterministischer Modus\n"
                 "bool g_nl_det = false;\nstd::atomic<uint64> g_nl_vclock{0};\n"
                 "uint64 g_nl_det_epoch = 820454400; // Sekunden seit 2000 (1.1.2026), vom Host vorgegeben\n"
-                "void (*g_nl_det_tick)() = nullptr;\nvoid (*g_nl_det_idle)() = nullptr;\n", log)
+                "void (*g_nl_det_tick)() = nullptr;\nvoid (*g_nl_det_idle)() = nullptr;\n"
+                "std::atomic<uint64> g_nl_cnt[8]{}; // Zaehler zur Fehlersuche: 0 IPC, 1 IPC-Timeout, 2 GPU, 3 Leerlauf, 4 Audio\n", log)
     _patch_file(tm, "uint64 PPCTimer_getFromRDTSC()\n{\n",
                 "uint64 PPCTimer_getFromRDTSC()\n{\n\tif (g_nl_det) return g_nl_vclock.load(std::memory_order_relaxed); // Nintendo Land Recomp\n", log)
     th = os.path.join(src, "Cafe", "OS", "libs", "coreinit", "coreinit_Thread.cpp")
@@ -208,7 +209,7 @@ def patch(cemu_dir, log):
                 "\t\t\tconst uint64 now = g_nl_vclock.load();\n\t\t\tif (s_nl_next == 0) s_nl_next = now + step;\n"
                 "\t\t\tif (now < s_nl_next) return;\n\t\t\ts_nl_next += step;\n"
                 "\t\t\tif (snd_core::isInitialized() && numQueuedFramesSndGeneric == snd_core::getNumProcessedFrames())\n\t\t\t{\n"
-                "\t\t\t\tAXOut_updateDevicePlayState(true);\n\t\t\t\tsnd_core::AXIst_QueueFrame();\n\t\t\t\tnumQueuedFramesSndGeneric++;\n\t\t\t}\n"
+                "\t\t\t\tAXOut_updateDevicePlayState(true);\n\t\t\t\tsnd_core::AXIst_QueueFrame();\n\t\t\t\tnumQueuedFramesSndGeneric++;\n\t\t\t\tg_nl_cnt[4]++;\n\t\t\t}\n"
                 "\t\t\treturn;\n\t\t}\n", log)
     lt = os.path.join(src, "Cafe", "HW", "Latte", "Core", "LatteTiming.cpp")
     _patch_file(lt, '#include "Cafe/OS/libs/gx2/GX2_Event.h"\n', '#include "Cafe/OS/libs/gx2/GX2_Event.h"\n' + EXT, log)
@@ -231,12 +232,13 @@ def patch(cemu_dir, log):
                 "static std::mutex s_nl_ipc_mtx;\nstatic std::set<const void*> s_nl_ipc_pending, s_nl_ipc_long;\n"
                 "bool NL_IPC_AnyPending() { std::lock_guard l(s_nl_ipc_mtx); return !s_nl_ipc_pending.empty(); }\n", log)
     _patch_file(ipc, "\t\tiosu::kernel::IPCSubmitFromCOS(coreIndex, command);\n\t}\n",
-                "\t\tif (g_nl_det) { std::lock_guard l(s_nl_ipc_mtx); s_nl_ipc_pending.insert(command); }\n"
+                "\t\tif (g_nl_det) { std::lock_guard l(s_nl_ipc_mtx); s_nl_ipc_pending.insert(command); g_nl_cnt[0]++; }\n"
                 "\t\tiosu::kernel::IPCSubmitFromCOS(coreIndex, command);\n"
                 "\t\tif (g_nl_det) // Nintendo Land Recomp: auf die Antwort warten (max. 100 ms), damit sie an fester Stelle ankommt\n\t\t{\n"
                 "\t\t\tauto t0 = std::chrono::steady_clock::now();\n\t\t\twhile (true)\n\t\t\t{\n"
                 "\t\t\t\t{\n\t\t\t\t\tstd::lock_guard l(s_nl_ipc_mtx);\n\t\t\t\t\tif (!s_nl_ipc_pending.count(command)) break;\n"
-                "\t\t\t\t\tif (std::chrono::steady_clock::now() - t0 > std::chrono::milliseconds(100)) { s_nl_ipc_pending.erase(command); s_nl_ipc_long.insert(command); break; }\n"
+                "\t\t\t\t\tif (std::chrono::steady_clock::now() - t0 > std::chrono::milliseconds(100)) { s_nl_ipc_pending.erase(command); s_nl_ipc_long.insert(command); g_nl_cnt[1]++; "
+                "cemuLog_log(LogType::Force, \"NL-DET: IPC-Anfrage dauert lange (cmd {} dev {} t={})\", (uint32)command->cmdId.value(), (uint32)command->devHandle.value(), g_nl_vclock.load()); break; }\n"
                 "\t\t\t\t}\n\t\t\t\tstd::this_thread::yield();\n\t\t\t}\n\t\t}\n\t}\n", log)
     _patch_file(ipc, "\t\tIPCDriver_KernelCallback(ipcDriver);\n\n\t\tlock.lock();\n",
                 "\t\tIPCDriver_KernelCallback(ipcDriver);\n"
@@ -264,7 +266,7 @@ def patch(cemu_dir, log):
                 "\t\ts_nl_notified.store((uint64)s_tclStatePPC->gpuRetireMarker); // Nintendo Land Recomp\n", log)
     _patch_file(tcl, "\t\t\t*timestampValueOut = s_currentRetireMarker; // incremented before each submit\n",
                 "\t\t\t*timestampValueOut = s_currentRetireMarker; // incremented before each submit\n"
-                "\t\t\tif (g_nl_det) // Nintendo Land Recomp: warten, bis die GPU fertig ist und es gemeldet hat\n\t\t\t{\n"
+                "\t\t\tif (g_nl_det) // Nintendo Land Recomp: warten, bis die GPU fertig ist und es gemeldet hat\n\t\t\t{\n\t\t\t\tg_nl_cnt[2]++;\n"
                 "\t\t\t\tauto t0 = std::chrono::steady_clock::now();\n"
                 "\t\t\t\twhile (s_nl_notified.load() < s_currentRetireMarker)\n\t\t\t\t{\n"
                 "\t\t\t\t\tif (std::chrono::steady_clock::now() - t0 > std::chrono::seconds(2)) { cemuLog_log(LogType::Force, \"NL-DET: GPU-Wartezeit ueberschritten\"); break; }\n"

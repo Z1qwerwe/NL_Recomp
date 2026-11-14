@@ -195,7 +195,9 @@ def _cemu_dirs(settings):
 
 def step_cemu_build(settings, game, log, stop):
     """Cemu holen, anpassen und mit unserem nativen Spielcode bauen."""
+    import importlib
     from . import cemu
+    importlib.reload(cemu)   # neue Patches ohne Launcher-Neustart
     cmake = _find_cmake()
     if not cmake:
         raise RuntimeError("CMake nicht gefunden (Visual Studio 2022 mit C++-Paket installieren).")

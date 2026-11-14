@@ -21,6 +21,7 @@
 extern bool g_nl_det;
 extern std::atomic<uint64> g_nl_vclock;
 extern uint64 g_nl_det_epoch;
+extern std::atomic<uint64> g_nl_cnt[8];
 extern void (*g_nl_det_tick)();
 extern void (*g_nl_det_idle)();
 void NL_Det_SignalVsync();
@@ -69,8 +70,9 @@ static void det_tick() {
         s_next_vsync += kVsync;
         s_vsync_count++;
         NL_Det_SignalVsync();
-        if (s_trace && s_vsync_count % 30 == 0)
-            cemuLog_log(LogType::Force, "NL-DET-T vsync={} vclock={}", s_vsync_count, g_nl_vclock.load());
+        if (s_trace && (s_vsync_count <= 120 || s_vsync_count % 30 == 0))
+            cemuLog_log(LogType::Force, "NL-DET-T vsync={} vclock={} ipc={} ipclang={} gpu={} leer={} audio={}", s_vsync_count,
+                        g_nl_vclock.load(), g_nl_cnt[0].load(), g_nl_cnt[1].load(), g_nl_cnt[2].load(), g_nl_cnt[3].load(), g_nl_cnt[4].load());
         if (s_hash && s_vsync_count % s_hash_every == 0) {
             auto t0 = std::chrono::steady_clock::now();
             uint64 h = hash_guest_memory();
@@ -94,6 +96,7 @@ static void det_idle() {
         return;
     }
     const uint64 v = g_nl_vclock.fetch_add(kIdleStep) + kIdleStep;
+    g_nl_cnt[3]++;
     // Echtzeit-Bremse: virtuelle Zeit darf der echten nicht davonlaufen
     auto real = std::chrono::steady_clock::now();
     if (!s_pace_init) {
