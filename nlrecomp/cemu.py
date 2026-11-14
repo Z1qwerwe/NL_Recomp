@@ -53,16 +53,46 @@ def fetch(cemu_dir, run, log):
     run([git, "-C", cemu_dir, "submodule", "update", "--init", "--recursive"], env=env)
 
 
+# Patches werden immer auf das Original aus Git angewendet (nicht auf die Datei auf der Platte).
+# So passen sie auch, wenn sich ein Patch geaendert hat, und Dateien werden nur geschrieben,
+# wenn sich ihr Inhalt wirklich aendert (sonst unnoetiges Neukompilieren).
+_state = {"root": None, "files": {}}
+
+
+def _original(path):
+    root = _state["root"]
+    if root:
+        rel = os.path.relpath(path, root).replace("\\", "/")
+        git = find_git()
+        if git:
+            r = subprocess.run([git, "-C", root, "show", "HEAD:" + rel], capture_output=True)
+            if r.returncode == 0:
+                return r.stdout.decode("utf-8").replace("\r\n", "\n")
+    return open(path, encoding="utf-8").read()
+
+
 def _patch_file(path, old, new, log):
-    s = open(path, encoding="utf-8").read()
+    files = _state["files"]
+    if path not in files:
+        files[path] = _original(path)
+    s = files[path]
     if new in s:
         return
     if old not in s:
         raise RuntimeError(f"Cemu-Patch passt nicht mehr: {os.path.basename(path)}")
-    s = s.replace(old, new, 1)
-    open(path, "w", encoding="utf-8", newline="\n").write(s)
-    log(f"  gepatcht: {os.path.relpath(path, os.path.dirname(os.path.dirname(path)))}")
+    files[path] = s.replace(old, new, 1)
 
+
+def _flush(log):
+    for path, s in _state["files"].items():
+        try:
+            cur = open(path, encoding="utf-8").read()
+        except OSError:
+            cur = None
+        if cur != s:
+            open(path, "w", encoding="utf-8", newline="\n").write(s)
+            log(f"  gepatcht: {os.path.relpath(path, os.path.dirname(os.path.dirname(path)))}")
+    _state["files"] = {}
 
 NL_COMBINED = """\t// Nintendo Land Recomp: TV- und GamePad-Bild zusammen im Hauptfenster
 \tif (g_nl_screens.mode != 0 && g_nl_screens.layout && !g_renderer->IsPadWindowActive())
@@ -107,6 +137,16 @@ NL_COMBINED = """\t// Nintendo Land Recomp: TV- und GamePad-Bild zusammen im Hau
 
 def patch(cemu_dir, log):
     """Kleine Aenderungen an Cemu (bleiben MPL-2.0)."""
+    _state["root"] = cemu_dir if os.path.isdir(os.path.join(cemu_dir, ".git")) else None
+    _state["files"] = {}
+    try:
+        _patch_all(cemu_dir, log)
+        _flush(log)
+    finally:
+        _state["files"] = {}
+
+
+def _patch_all(cemu_dir, log):
     # 1. CMake: unseren AOT-Code einbinden
     _patch_file(os.path.join(cemu_dir, "CMakeLists.txt"),
                 "add_subdirectory(src)\n",
