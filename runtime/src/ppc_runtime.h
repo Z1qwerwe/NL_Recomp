@@ -30,7 +30,16 @@ static NL_INLINE uint32_t ld32(uint32_t a) { uint32_t v; memcpy(&v, g_base + a, 
 static NL_INLINE uint64_t ld64(uint32_t a) { uint64_t v; memcpy(&v, g_base + a, 8); return bswap64(v); }
 static NL_INLINE void st8(uint32_t a, uint32_t v) { g_base[a] = (uint8_t)v; }
 static NL_INLINE void st16(uint32_t a, uint32_t v) { uint16_t x = bswap16((uint16_t)v); memcpy(g_base + a, &x, 2); }
+#if defined(NL_TRACE_FUNCS)
+extern uint32_t g_watch_addr;
+void nl_watch_hit(uint32_t a, uint32_t v);
+static NL_INLINE void st32(uint32_t a, uint32_t v) {
+    if (a == g_watch_addr) nl_watch_hit(a, v);
+    uint32_t x = bswap32(v); memcpy(g_base + a, &x, 4);
+}
+#else
 static NL_INLINE void st32(uint32_t a, uint32_t v) { uint32_t x = bswap32(v); memcpy(g_base + a, &x, 4); }
+#endif
 static NL_INLINE void st64(uint32_t a, uint64_t v) { uint64_t x = bswap64(v); memcpy(g_base + a, &x, 8); }
 
 static NL_INLINE uint64_t fbits(double d) { uint64_t u; memcpy(&u, &d, 8); return u; }

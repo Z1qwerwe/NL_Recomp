@@ -22,6 +22,11 @@ uint8_t* g_base = nullptr;
 #if defined(NL_TRACE_FUNCS)
 thread_local uint32_t g_trace_ring[1024];
 thread_local uint32_t g_trace_pos = 0;
+uint32_t g_watch_addr = getenv("NL_WATCH") ? (uint32_t)strtoul(getenv("NL_WATCH"), nullptr, 16) : 0xFFFFFFFFu;
+void nl_watch_hit(uint32_t a, uint32_t v) {
+    printf("[Watch] 0x%08X <- 0x%08X\n", a, v);
+    nl_dump_trace("Watch");
+}
 void nl_dump_trace(const char* why) {
     printf("--- Letzte Funktionen (%s) ---\n", why);
     for (uint32_t i = 64; i > 0; i--) printf(" %08X", g_trace_ring[(g_trace_pos - i) & 1023]);
