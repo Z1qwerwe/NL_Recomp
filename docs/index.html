@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NL Recomp — Nintendo Land, native on PC</title>
+<meta name="description" content="NL Recomp runs Nintendo Land (Wii U) natively on PC: own window, in-game settings, controller support and online play with friends over Steam.">
+<link rel="icon" href="assets/icon_256.png">
+<style>
+:root{
+  --bg:#eef2f6; --bg2:#dde4eb; --card:#ffffff; --edge:#d3dae2;
+  --fg:#3e424a; --muted:#8c929c;
+  --accent:#00aee8; --accent-hi:#33c2f0; --accent-dk:#0090c8;
+  --r1:#e63c3c; --r2:#fa9628; --r3:#fad732; --r4:#50be5a; --r5:#3c96e6; --r6:#965ad2;
+  --shadow:0 2px 0 rgba(255,255,255,.9) inset, 0 6px 18px rgba(60,80,110,.13), 0 1px 2px rgba(60,80,110,.15);
+  --font:"Segoe UI","Hiragino Maru Gothic ProN","Arial Rounded MT Bold","Nunito",system-ui,-apple-system,sans-serif;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{
+  margin:0; font-family:var(--font); color:var(--fg); line-height:1.55;
+  background:
+    repeating-linear-gradient(0deg, rgba(255,255,255,.55) 0 2px, transparent 2px 6px),
+    linear-gradient(180deg,#f7f9fb 0%,var(--bg) 40%,var(--bg2) 100%);
+  background-attachment:fixed;
+  padding-bottom:110px;
+}
+a{color:var(--accent-dk)}
+code,kbd{font-family:Consolas,"SFMono-Regular",Menlo,monospace;font-size:.9em}
+kbd{display:inline-block;min-width:1.9em;text-align:center;padding:.1em .5em;border-radius:7px;
+  background:linear-gradient(#fff,#e9eef3);border:1px solid var(--edge);box-shadow:0 2px 0 var(--edge);color:var(--fg)}
+code{background:#e7edf3;padding:.1em .4em;border-radius:6px}
+
+/* ---------- boot screen (white flash + dots) ---------- */
+#boot{position:fixed;inset:0;background:#fff;z-index:100;display:flex;align-items:center;justify-content:center;
+  transition:opacity .5s ease .1s}
+#boot.gone{opacity:0;pointer-events:none}
+.dots{position:relative;width:64px;height:64px}
+.dots i{position:absolute;left:50%;top:50%;width:10px;height:10px;margin:-5px;border-radius:50%;background:var(--accent);
+  animation:dot 1s linear infinite}
+@keyframes dot{0%{opacity:1}100%{opacity:.15}}
+
+/* ---------- top bar ---------- */
+.topbar{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:14px;
+  padding:10px clamp(14px,4vw,40px);
+  background:linear-gradient(#ffffffee,#f2f5f8ee);backdrop-filter:blur(8px);
+  border-bottom:1px solid var(--edge);box-shadow:0 2px 10px rgba(60,80,110,.08)}
+.topbar img{width:38px;height:38px}
+.topbar b{font-size:1.05rem;letter-spacing:.02em}
+.topbar .sp{flex:1}
+.pill{display:inline-flex;align-items:center;gap:6px;padding:6px 14px;border-radius:999px;font-size:.85rem;
+  background:#fff;border:1px solid var(--edge);color:var(--muted);box-shadow:var(--shadow)}
+.pill .led{width:8px;height:8px;border-radius:50%;background:var(--r4);box-shadow:0 0 6px var(--r4)}
+#clock{font-variant-numeric:tabular-nums;color:var(--fg);font-weight:600}
+
+/* ---------- hero ---------- */
+.wrap{max-width:1080px;margin:0 auto;padding:0 clamp(14px,4vw,32px)}
+.hero{display:grid;grid-template-columns:auto 1fr;gap:clamp(18px,4vw,48px);align-items:center;margin:38px auto 26px}
+.hero .logo{width:clamp(150px,22vw,230px);aspect-ratio:1;border-radius:34px;background:#fff;padding:10px;box-shadow:var(--shadow);
+  border:1px solid var(--edge);position:relative;overflow:hidden}
+.hero .logo img{width:100%;height:100%;display:block}
+.hero .logo::after{content:"";position:absolute;inset:0 0 55% 0;background:linear-gradient(#ffffff99,#ffffff00);pointer-events:none}
+.hero h1{margin:0 0 6px;font-size:clamp(1.9rem,4.4vw,3rem);line-height:1.1;font-weight:700}
+.hero h1 span{color:var(--accent)}
+.hero p{margin:0 0 18px;color:var(--muted);font-size:1.08rem;max-width:56ch}
+.ring{display:flex;gap:6px;margin:0 0 16px}
+.ring i{width:22px;height:6px;border-radius:3px}
+.btns{display:flex;flex-wrap:wrap;gap:12px}
+.btn{display:inline-flex;align-items:center;gap:8px;padding:12px 24px;border-radius:999px;text-decoration:none;font-weight:700;
+  border:1px solid var(--edge);background:linear-gradient(#fff,#eef2f6);color:var(--fg);box-shadow:var(--shadow);
+  transition:transform .12s, box-shadow .12s}
+.btn:hover{transform:translateY(-2px)}
+.btn:active{transform:translateY(1px) scale(.98)}
+.btn.primary{background:linear-gradient(var(--accent-hi),var(--accent) 55%,var(--accent-dk));color:#fff;border-color:var(--accent-dk);
+  text-shadow:0 1px 0 rgba(0,0,0,.15)}
+.notice{margin:6px 0 30px;padding:14px 18px;border-radius:16px;background:#fffbea;border:1px solid #f2dc8c;color:#7a5d00;font-size:.95rem}
+
+/* ---------- tile grid (Wii U menu) ---------- */
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:16px;margin-bottom:40px}
+.tile{position:relative;display:flex;flex-direction:column;justify-content:flex-end;min-height:150px;padding:74px 14px 14px;border-radius:20px;
+  text-decoration:none;color:var(--fg);background:var(--card);border:1px solid var(--edge);box-shadow:var(--shadow);overflow:hidden;
+  transition:transform .15s, box-shadow .15s}
+.tile::before{content:"";position:absolute;inset:0 0 50% 0;background:linear-gradient(#ffffffd0,#ffffff00);z-index:1;pointer-events:none}
+.tile .ico{position:absolute;top:14px;left:14px;width:48px;height:48px;border-radius:14px;display:grid;place-items:center;
+  font-size:26px;color:#fff;box-shadow:0 3px 8px rgba(0,0,0,.15)}
+.tile b{position:relative;z-index:2;font-size:1rem}
+.tile small{position:relative;z-index:2;color:var(--muted);font-size:.8rem}
+.tile:hover,.tile:focus-visible{transform:translateY(-3px) scale(1.02);outline:none;
+  box-shadow:0 0 0 4px var(--accent-hi), 0 10px 24px rgba(0,120,180,.22)}
+.c1{background:linear-gradient(135deg,#ff6b6b,var(--r1))}
+.c2{background:linear-gradient(135deg,#ffb35c,var(--r2))}
+.c3{background:linear-gradient(135deg,#ffe56a,#e8c11b)}
+.c4{background:linear-gradient(135deg,#7ddc86,var(--r4))}
+.c5{background:linear-gradient(135deg,#6db8f5,var(--r5))}
+.c6{background:linear-gradient(135deg,#b88ae6,var(--r6))}
+.c7{background:linear-gradient(135deg,var(--accent-hi),var(--accent-dk))}
+.c8{background:linear-gradient(135deg,#9aa3ae,#6c7480)}
+
+/* ---------- section panels ---------- */
+section.panel{background:var(--card);border:1px solid var(--edge);border-radius:24px;box-shadow:var(--shadow);
+  margin:0 0 26px;overflow:hidden;scroll-margin-top:80px}
+.panel header{display:flex;align-items:center;gap:12px;padding:14px 22px;
+  background:linear-gradient(#ffffff,#eef2f6);border-bottom:1px solid var(--edge)}
+.panel header .ico{width:34px;height:34px;border-radius:10px;display:grid;place-items:center;color:#fff;font-size:18px}
+.panel header h2{margin:0;font-size:1.25rem}
+.panel .body{padding:18px 24px 22px}
+.panel h3{margin:18px 0 6px;font-size:1.02rem;color:var(--accent-dk)}
+.panel ul,.panel ol{padding-left:1.3em;margin:.4em 0}
+.panel li{margin:.25em 0}
+.steps{counter-reset:s;list-style:none;padding:0!important}
+.steps li{counter-increment:s;position:relative;padding:10px 12px 10px 54px;margin:8px 0;background:#f5f8fb;border:1px solid var(--edge);border-radius:14px}
+.steps li::before{content:counter(s);position:absolute;left:12px;top:50%;transform:translateY(-50%);width:30px;height:30px;border-radius:50%;
+  display:grid;place-items:center;font-weight:700;color:#fff;background:linear-gradient(var(--accent-hi),var(--accent-dk))}
+table{width:100%;border-collapse:separate;border-spacing:0;margin:10px 0;font-size:.95rem}
+th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--edge);vertical-align:top}
+th{background:#f2f5f8;font-weight:700}
+tr:last-child td{border-bottom:0}
+.tbl{border:1px solid var(--edge);border-radius:14px;overflow:hidden;overflow-x:auto}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+.card2{background:#f5f8fb;border:1px solid var(--edge);border-radius:16px;padding:14px 16px}
+.card2 h4{margin:0 0 6px}
+.flow{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:10px 0}
+.flow span{padding:8px 14px;border-radius:12px;background:#f5f8fb;border:1px solid var(--edge);font-weight:600;font-size:.9rem}
+.flow em{color:var(--accent);font-style:normal;font-weight:700}
+details{border:1px solid var(--edge);border-radius:14px;padding:10px 14px;margin:8px 0;background:#f9fbfc}
+details summary{cursor:pointer;font-weight:700}
+details[open] summary{margin-bottom:6px}
+
+/* ---------- bottom dock ---------- */
+.dock{position:fixed;left:0;right:0;bottom:0;z-index:30;display:flex;justify-content:center;gap:clamp(10px,3vw,26px);
+  padding:12px 10px calc(12px + env(safe-area-inset-bottom));
+  background:linear-gradient(#f4f6f9f2,#dfe5ecf2);backdrop-filter:blur(8px);border-top:1px solid var(--edge);
+  box-shadow:0 -4px 16px rgba(60,80,110,.1)}
+.dock a{display:flex;flex-direction:column;align-items:center;gap:3px;text-decoration:none;color:var(--muted);font-size:.72rem;font-weight:600}
+.dock a .b{width:52px;height:52px;border-radius:50%;display:grid;place-items:center;font-size:22px;
+  background:linear-gradient(#fff,#e7ecf1);border:1px solid var(--edge);box-shadow:var(--shadow);color:var(--fg);transition:transform .12s}
+.dock a:hover .b{transform:translateY(-3px);color:var(--accent)}
+.dock a.main .b{background:linear-gradient(var(--accent-hi),var(--accent-dk));color:#fff;border-color:var(--accent-dk)}
+
+footer{text-align:center;color:var(--muted);font-size:.85rem;margin:30px 0 10px}
+
+@media (max-width:720px){
+  .hero{grid-template-columns:1fr;text-align:center;justify-items:center}
+  .hero p{margin-inline:auto}.ring,.btns{justify-content:center}
+  .two{grid-template-columns:1fr}
+  .topbar .pill.hide-s{display:none}
+}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}html{scroll-behavior:auto}}
+</style>
+</head>
+<body>
+
+<div id="boot" aria-hidden="true"><div class="dots" id="dots"></div></div>
+
+<div class="topbar">
+  <img src="assets/icon_256.png" alt="">
+  <b>NL Recomp</b>
+  <div class="sp"></div>
+  <span class="pill hide-s"><span class="led"></span>v0.1.0</span>
+  <span class="pill" id="clock">--:--</span>
+</div>
+
+<main class="wrap">
+
+  <div class="hero">
+    <div class="logo"><img src="assets/logo_512.png" alt="NL Recomp logo"></div>
+    <div>
+      <div class="ring"><i style="background:var(--r1)"></i><i style="background:var(--r2)"></i><i style="background:var(--r3)"></i><i style="background:var(--r4)"></i><i style="background:var(--r5)"></i><i style="background:var(--r6)"></i></div>
+      <h1>Nintendo Land,<br><span>native on PC.</span></h1>
+      <p>Its own <code>NintendoLand.exe</code> with its own window, an in-game settings menu, controller support and <b>online play with friends over Steam</b> — no emulator window, no Cemu UI.</p>
+      <div class="btns">
+        <a class="btn primary" href="https://github.com/Z1qwerwe/NL_Recomp/releases">⬇ Download</a>
+        <a class="btn" href="#start">▶ Quick start</a>
+        <a class="btn" href="https://github.com/Z1qwerwe/NL_Recomp">GitHub</a>
+      </div>
+    </div>
+  </div>
+
+  <div class="notice"><b>No game files are included</b> — not in the repo and not in any release, and no code generated from the game either. You need your own dump of Nintendo Land (e.g. made with dumpling from your Wii U). The launcher builds the game on your PC from your dump.</div>
+
+  <nav class="grid" aria-label="Sections">
+    <a class="tile" href="#start"><span class="ico c7">▶</span><b>Quick start</b><small>Dump → build → play</small></a>
+    <a class="tile" href="#online"><span class="ico c4">🌐</span><b>Online</b><small>Play with friends</small></a>
+    <a class="tile" href="#controls"><span class="ico c2">🎮</span><b>Controls</b><small>Pads, mouse, keys</small></a>
+    <a class="tile" href="#menu"><span class="ico c6">⚙</span><b>In-game menu</b><small>Screen, game, sound</small></a>
+    <a class="tile" href="#how"><span class="ico c5">🧩</span><b>How it works</b><small>Recompiler + Cemu core</small></a>
+    <a class="tile" href="#roadmap"><span class="ico c3">★</span><b>Roadmap</b><small>What's next in v0.2</small></a>
+    <a class="tile" href="#faq"><span class="ico c1">?</span><b>FAQ</b><small>Problems &amp; answers</small></a>
+    <a class="tile" href="#legal"><span class="ico c8">§</span><b>Legal</b><small>Licenses &amp; notes</small></a>
+  </nav>
+
+  <!-- QUICK START -->
+  <section class="panel" id="start">
+    <header><span class="ico c7">▶</span><h2>Quick start</h2></header>
+    <div class="body">
+      <ol class="steps">
+        <li>Install <b>Python 3.8+</b> from python.org (tick <i>“Add to PATH”</i>).</li>
+        <li>Download the release ZIP, extract it and run <b><code>start.bat</code></b>.</li>
+        <li>Pick your extracted game folder — the one with <code>code/</code>, <code>content/</code> and <code>meta/</code>.</li>
+        <li>Click <b>Build game</b>. If Git or the Visual Studio Build Tools are missing, the launcher offers to install them via winget (~6–8 GB, asks for admin rights once). The first build takes a while.</li>
+        <li>Click <b>PLAY</b>.</li>
+      </ol>
+      <h3>Good to know</h3>
+      <ul>
+        <li>Shaders are compiled ahead of time by the launcher, so the game doesn't stutter the first time you see something.</li>
+        <li>No GUI? <code>python launcher.py --cli</code> runs every step using <code>settings.json</code>.</li>
+        <li>Windows only for now.</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- ONLINE -->
+  <section class="panel" id="online">
+    <header><span class="ico c4">🌐</span><h2>Online with friends</h2></header>
+    <div class="body">
+      <p>The host runs the game, friends see the host's TV image and play as <b>Wiimote players 2–5</b>. Friends <b>don't need the game</b>.</p>
+      <div class="flow"><span>Host: NintendoLand.exe</span><em>→ video + sound →</em><span>Friend: NLOnline.exe</span><em>→ inputs →</em><span>Host</span></div>
+      <div class="two">
+        <div class="card2">
+          <h4>🏠 Host</h4>
+          <ol>
+            <li><kbd>Esc</kbd> → <b>Online</b> → <i>Open room</i></li>
+            <li>Share the 6-letter code — or invite friends straight from the friend list.</li>
+            <li>Kick players or switch a Wiimote to sideways from the same page.</li>
+          </ol>
+        </div>
+        <div class="card2">
+          <h4>🙋 Friends</h4>
+          <ol>
+            <li>Run <b>NLOnline.exe</b> (from <code>NLOnline_fuer_Freunde.zip</code> in the release or the host's <code>bin</code> folder).</li>
+            <li>Enter the code, or click <i>Join</i> next to the host in the friend list.</li>
+          </ol>
+        </div>
+      </div>
+      <h3>Requirements</h3>
+      <ul>
+        <li>Steam must be running on both sides. Friends, codes and NAT traversal use Steam's test app <b>“Spacewar” (AppID 480)</b>.</li>
+        <li>Upload per friend:</li>
+      </ul>
+      <div class="tbl"><table>
+        <tr><th>Quality (Online menu)</th><th>Resolution</th><th>Upload per friend</th></tr>
+        <tr><td>Low</td><td>540p</td><td>~3.5 Mbit/s</td></tr>
+        <tr><td>Medium</td><td>720p</td><td>~6 Mbit/s</td></tr>
+        <tr><td>High</td><td>720p+</td><td>~12 Mbit/s</td></tr>
+      </table></div>
+    </div>
+  </section>
+
+  <!-- CONTROLS -->
+  <section class="panel" id="controls">
+    <header><span class="ico c2">🎮</span><h2>Controls</h2></header>
+    <div class="body">
+      <h3>Controllers</h3>
+      <p>Xbox, PlayStation (incl. gyro), Switch Pro and more. The <b>first</b> controller is the GamePad, every further one becomes a <b>Wiimote with Nunchuk</b>. The button layout (Nintendo-style A right, or Xbox/PS-style A bottom) is picked automatically and can be changed in the menu.</p>
+      <h3>Window &amp; mouse</h3>
+      <div class="tbl"><table>
+        <tr><th>Key</th><th>Action</th></tr>
+        <tr><td><kbd>Esc</kbd> / Home / Guide</td><td>Open the menu (Esc also releases the mouse)</td></tr>
+        <tr><td><kbd>F11</kbd> / <kbd>Alt</kbd>+<kbd>Enter</kbd></td><td>Fullscreen</td></tr>
+        <tr><td><kbd>Tab</kbd></td><td>Swap TV / GamePad image</td></tr>
+        <tr><td>Click big image</td><td>Capture the mouse as camera</td></tr>
+        <tr><td>Click GamePad image</td><td>Touch screen</td></tr>
+      </table></div>
+      <h3>Default keyboard layout</h3>
+      <p>Everything can be rebound in the menu (two keys + one controller button per action).</p>
+      <div class="tbl"><table>
+        <tr><th>GamePad</th><th>Key</th><th>GamePad</th><th>Key</th></tr>
+        <tr><td>Left stick</td><td><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></td><td>Right stick</td><td><kbd>I</kbd><kbd>J</kbd><kbd>K</kbd><kbd>L</kbd></td></tr>
+        <tr><td>A</td><td><kbd>Enter</kbd> / <kbd>E</kbd></td><td>B</td><td><kbd>Backspace</kbd> / <kbd>Ctrl</kbd></td></tr>
+        <tr><td>X</td><td><kbd>Space</kbd></td><td>Y</td><td><kbd>F</kbd></td></tr>
+        <tr><td>L / R</td><td><kbd>Q</kbd> / <kbd>R</kbd></td><td>ZL / ZR</td><td><kbd>1</kbd> / <kbd>3</kbd></td></tr>
+        <tr><td>+ / −</td><td><kbd>P</kbd> / <kbd>M</kbd></td><td>D-pad</td><td>Arrow keys</td></tr>
+        <tr><td>Stick clicks</td><td><kbd>C</kbd> / <kbd>V</kbd></td><td>Microphone</td><td><kbd>T</kbd></td></tr>
+        <tr><td>Home</td><td><kbd>H</kbd></td><td>Swap screens</td><td><kbd>Tab</kbd></td></tr>
+      </table></div>
+    </div>
+  </section>
+
+  <!-- MENU -->
+  <section class="panel" id="menu">
+    <header><span class="ico c6">⚙</span><h2>In-game menu</h2></header>
+    <div class="body">
+      <p>Press <kbd>Esc</kbd> to open it. Some changes only apply after a restart — the menu tells you.</p>
+      <div class="two">
+        <div class="card2"><h4>🖥 Screen</h4>Fullscreen, VSync, performance overlay, screen layout (one screen / picture-in-picture / side by side), separate GamePad window, resolution, up- &amp; downscaling filter, texture filtering, aspect ratio, which image is big at start.</div>
+        <div class="card2"><h4>🎲 Game</h4>Console language (11 languages), shaders compiled in the background.</div>
+        <div class="card2"><h4>🔊 Sound</h4>Master volume (TV), GamePad volume, microphone and mic volume.</div>
+        <div class="card2"><h4>🎮 Controls</h4>Button layout, controller gyro, free camera instead of tilting, stick-camera speed, mouse camera &amp; sensitivity, invert Y, stick deadzone, full rebinding.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- HOW -->
+  <section class="panel" id="how">
+    <header><span class="ico c5">🧩</span><h2>How it works</h2></header>
+    <div class="body">
+      <div class="flow"><span>Your dump (.rpx)</span><em>→</em><span>recomp/ → C++</span><em>→</em><span>+ Cemu core libs</span><em>→</em><span>NintendoLand.exe</span></div>
+      <ul>
+        <li><code>recomp/</code> statically recompiles the game's PowerPC code to C++ — on your PC, from your dump.</li>
+        <li>Cemu's core libraries (MPL-2.0) provide the Wii U OS, graphics (Vulkan), audio and input. Cemu's UI isn't used. <code>nlrecomp/cemu.py</code> fetches a pinned, tested Cemu version and applies small patches.</li>
+        <li><code>frontend/</code> is the game program (window, menu, input, online); <code>frontend/client/</code> is NLOnline.exe.</li>
+      </ul>
+      <div class="tbl"><table>
+        <tr><th>Folder</th><th>Contents</th></tr>
+        <tr><td><code>launcher.py</code>, <code>nlrecomp/</code></td><td>Launcher: detect the game, recompile, install build tools, build, launch</td></tr>
+        <tr><td><code>recomp/</code></td><td>Recompiler <code>.rpx</code> → C++</td></tr>
+        <tr><td><code>cemu/aot/</code></td><td>Integration of the recompiled code into Cemu</td></tr>
+        <tr><td><code>frontend/</code></td><td>NintendoLand.exe and NLOnline.exe</td></tr>
+        <tr><td><code>third_party/steam/</code></td><td><code>steam_api64.dll</code> (Valve redistributable)</td></tr>
+        <tr><td><code>runtime/</code>, <code>aroma-plugin/</code>, <code>tools/</code></td><td>Experiments and helper tools</td></tr>
+      </table></div>
+    </div>
+  </section>
+
+  <!-- ROADMAP -->
+  <section class="panel" id="roadmap">
+    <header><span class="ico c3">★</span><h2>Roadmap — v0.2</h2></header>
+    <div class="body">
+      <h3>1 · Fixes first</h3>
+      <ul>
+        <li>Smoother streaming: higher Steam send rate, smaller video packets, regular keyframes, adaptive bitrate.</li>
+        <li>Sound without crackling: jitter buffer, later Opus instead of raw PCM.</li>
+        <li>Wiimote pointer for friends (mouse / right stick / gyro), not just clicks.</li>
+      </ul>
+      <h3>2 · Quick features</h3>
+      <ul><li>New logo everywhere · “NL” branding · English &amp; German texts · live chat (<kbd>T</kbd> / <kbd>Enter</kbd>)</li></ul>
+      <h3>3 · Bigger features</h3>
+      <ul><li>Real Wiimotes over Bluetooth (host first, then friends) · bring your own Mii online</li></ul>
+      <h3>4 · Research</h3>
+      <ul><li>Seeing each other in the Plaza · real lockstep netplay where everyone owns the game</li></ul>
+    </div>
+  </section>
+
+  <!-- FAQ -->
+  <section class="panel" id="faq">
+    <header><span class="ico c1">?</span><h2>FAQ</h2></header>
+    <div class="body">
+      <details><summary>Is this an emulator?</summary>No window of Cemu or any other emulator is used. The game's code is recompiled to native C++; Cemu's core libraries are used under the hood for the Wii U OS, graphics, audio and input.</details>
+      <details><summary>Where do I get the game?</summary>Only from your own Wii U and your own copy of Nintendo Land — dump it with a tool like dumpling. Nothing is downloaded or shipped by this project.</details>
+      <details><summary>Do my friends need the game?</summary>No. Friends only run NLOnline.exe and see the host's stream.</details>
+      <details><summary>Online says “Steam not connected”.</summary>Start Steam first, then restart the game.</details>
+      <details><summary>The stream stutters.</summary>Lower the quality in <b>Online</b> (Low = ~3.5 Mbit/s per friend). Smoother streaming is the top item for v0.2.</details>
+      <details><summary>The first build takes forever.</summary>That's normal — the whole game is recompiled and compiled once. Later starts are fast.</details>
+    </div>
+  </section>
+
+  <!-- LEGAL -->
+  <section class="panel" id="legal">
+    <header><span class="ico c8">§</span><h2>Legal</h2></header>
+    <div class="body">
+      <p>Nintendo Land is © Nintendo. This is an unofficial fan project and is not affiliated with or endorsed by Nintendo. It contains no Nintendo code or assets; you must own the game.</p>
+      <p>Cemu is licensed under MPL-2.0. <code>steam_api64.dll</code> is redistributed under the Steamworks SDK terms.</p>
+    </div>
+  </section>
+
+  <footer>NL Recomp · unofficial fan project</footer>
+</main>
+
+<nav class="dock" aria-label="Quick links">
+  <a href="#top" onclick="window.scrollTo({top:0});return false"><span class="b">⌂</span>Home</a>
+  <a href="#start"><span class="b">▶</span>Start</a>
+  <a class="main" href="https://github.com/Z1qwerwe/NL_Recomp/releases"><span class="b">⬇</span>Download</a>
+  <a href="#online"><span class="b">🌐</span>Online</a>
+  <a href="#faq"><span class="b">?</span>Help</a>
+</nav>
+
+<script>
+// boot dots (Wii U style loading circle)
+(function(){
+  var d=document.getElementById('dots');
+  for(var i=0;i<8;i++){var e=document.createElement('i');var a=i/8*2*Math.PI;
+    e.style.transform='translate('+(Math.cos(a)*24)+'px,'+(Math.sin(a)*24)+'px)';
+    e.style.animationDelay=(i/8-1)+'s';d.appendChild(e);}
+  window.addEventListener('load',function(){setTimeout(function(){document.getElementById('boot').classList.add('gone')},450)});
+  setTimeout(function(){document.getElementById('boot').classList.add('gone')},2500);
+})();
+// clock in the top bar
+(function(){var c=document.getElementById('clock');function t(){var n=new Date();
+  c.textContent=String(n.getHours()).padStart(2,'0')+':'+String(n.getMinutes()).padStart(2,'0');}t();setInterval(t,10000);})();
+</script>
+</body>
+</html>
