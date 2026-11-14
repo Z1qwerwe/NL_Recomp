@@ -3,7 +3,7 @@
 set(NL_FRONTEND_DIR ${CMAKE_CURRENT_LIST_DIR})
 
 add_executable(NintendoLand ${NL_FRONTEND_DIR}/main.cpp)
-cemu_use_precompiled_header(NintendoLand)
+target_precompile_headers(NintendoLand PRIVATE "${CMAKE_SOURCE_DIR}/src/Common/precompiled.h")
 target_include_directories(NintendoLand PRIVATE ${CMAKE_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/src/gui/interface)
 
 if(WIN32)

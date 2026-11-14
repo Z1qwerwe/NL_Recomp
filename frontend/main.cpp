@@ -35,6 +35,7 @@
 #include <Windows.h>
 #include <objbase.h>
 #include <windowsx.h>
+#pragma comment(lib, "Dbghelp.lib")
 
 
 #include <fstream>
@@ -167,7 +168,9 @@ void WindowSystem::RefreshGameList() {}
 void WindowSystem::CaptureInput(const ControllerState&, const ControllerState&) {}
 bool WindowSystem::IsFullScreen() { return g_window_info.is_fullscreen; }
 
-==========
+// ===========================================================================
+// Hilfen
+// ===========================================================================
 static void fatal(const std::string& msg) {
     cemuLog_log(LogType::Force, "Nintendo Land: {}", msg);
     WindowSystem::ShowErrorDialog(msg, "Nintendo Land");
@@ -392,7 +395,7 @@ static HWND make_window(const wchar_t* title, int w, int h) {
         wc.hInstance = inst;
         wc.hIcon = LoadIconW(inst, MAKEINTRESOURCEW(1));
         wc.hIconSm = wc.hIcon;
-        wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+        wc.hCursor = LoadCursorW(nullptr, MAKEINTRESOURCEW(32512));
         wc.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
         wc.lpszClassName = L"NintendoLandWindow";
         RegisterClassExW(&wc);
