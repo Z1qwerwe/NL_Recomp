@@ -7,6 +7,7 @@
 #include <cstring>
 
 #define WIN32_LEAN_AND_MEAN
+#define NOMINMAX   // sonst macht windows.h aus std::max ein Makro
 #include <windows.h>
 #include <codecapi.h>
 #include <mfapi.h>

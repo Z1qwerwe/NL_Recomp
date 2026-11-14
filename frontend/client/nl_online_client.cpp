@@ -2,6 +2,7 @@
 // Enthaelt keinen Spielcode: zeigt nur das gestreamte TV-Bild, spielt den Ton ab und schickt die
 // Controller-Eingaben zum Host. Man wird dort Wiimote-Spieler (2-5).
 #define WIN32_LEAN_AND_MEAN
+#define NOMINMAX   // sonst macht windows.h aus std::max ein Makro
 #include <windows.h>
 #include <d3d11.h>
 #include <dxgi.h>
