@@ -1,75 +1,75 @@
 # Nintendo Land Recomp
 
-Inoffizieller Versuch, **Nintendo Land (Wii U)** per Static Recompilation nativ auf dem PC laufen zu lassen, mit dem Ziel, einen Online-Multiplayer einzubauen.
+An unofficial attempt to run **Nintendo Land (Wii U)** natively on PC via static recompilation, with the goal of adding online multiplayer.
 
-> Dieses Repo enthält **keine** Spieldateien und keinen aus dem Spiel erzeugten Code.
-> Du brauchst deinen eigenen Dump von Nintendo Land (z. B. mit dumpling von deiner Wii U).
+> This repo contains **no** game files and no code generated from the game.
+> You need your own dump of Nintendo Land (e.g. made with dumpling from your Wii U).
 
-## Zwei Wege
+## Two approaches
 
-1. **Cemu-Version (empfohlen):** Cemu (MPL-2.0) liefert Betriebssystem, Grafik (Vulkan/OpenGL), Audio, Controller und Mikrofon. Statt Cemus CPU-Emulation laufen die recompilierten, nativen Spielfunktionen (`cemu/aot/`). Im Launcher: **Cemu-Version bauen**, dann **SPIELEN**.
-2. **Eigene Runtime:** komplett eigene Umsetzung (`runtime/`), gut zum Testen und Debuggen, aber noch ohne echte Grafik.
+1. **Cemu version (recommended):** Cemu (MPL-2.0) provides the operating system, graphics (Vulkan/OpenGL), audio, controllers and microphone. Instead of Cemu's CPU emulation, the recompiled native game functions (`cemu/aot/`) are run. In the launcher: **Build Cemu version**, then **PLAY**.
+2. **Custom runtime:** a fully custom implementation (`runtime/`), good for testing and debugging, but no real graphics yet.
 
-## Aufbau
+## Structure
 
-| Ordner | Inhalt |
+| Folder | Contents |
 |---|---|
-| `launcher.py`, `nlrecomp/` | Launcher (Python/Tkinter): Spiel erkennen, analysieren, Shader sammeln, recompilen, bauen, starten |
-| `recomp/` | Recompiler: `.rpx` → C++ (PowerPC/Espresso inkl. Paired Singles) |
-| `runtime/` | Eigene C++-Runtime: Speicher, HLE der Wii-U-Systembibliotheken (coreinit, FS, Threads, …) |
-| `cemu/aot/` | Anbindung an Cemu: Header für den generierten Code, `nl_aot_glue.cpp`, CMake-Einbindung |
-| `nlrecomp/cemu.py` | Holt Cemu (fester Stand), wendet die kleinen Anpassungen an und baut alles |
-| `aroma-plugin/` | Experimentelles Aroma-Plugin für Netplay auf echter Hardware |
-| `tools/` | Hilfstools (RPX-Import-Analyse) |
+| `launcher.py`, `nlrecomp/` | Launcher (Python/Tkinter): detect the game, analyze, collect shaders, recompile, build, launch |
+| `recomp/` | Recompiler: `.rpx` → C++ (PowerPC/Espresso incl. paired singles) |
+| `runtime/` | Custom C++ runtime: memory, HLE of the Wii U system libraries (coreinit, FS, threads, …) |
+| `cemu/aot/` | Cemu integration: headers for the generated code, `nl_aot_glue.cpp`, CMake integration |
+| `nlrecomp/cemu.py` | Fetches Cemu (pinned version), applies the small patches and builds everything |
+| `aroma-plugin/` | Experimental Aroma plugin for netplay on real hardware |
+| `tools/` | Helper tools (RPX import analysis) |
 
-## Benutzung
+## Usage
 
-1. Python 3.8+ und Visual Studio 2022 mit „Desktopentwicklung mit C++“ installieren.
-2. `start.bat` starten und den entpackten Spielordner (mit `code/`, `content/`, `meta/`) auswählen.
-3. **Recompilen + Bauen**, dann **SPIELEN**.
+1. Install Python 3.8+ and Visual Studio 2022 with "Desktop development with C++".
+2. Run `start.bat` and select the extracted game folder (containing `code/`, `content/`, `meta/`).
+3. **Recompile + Build**, then **PLAY**.
 
-## Stand
+## Status
 
-- [x] RPX laden, Relocations, 99.749 Funktionen nach C++
-- [x] Spiel läuft bis zur Grafik-Initialisierung
-- [x] Threads, Mutexe, Events, Message-Queues, Alarme
-- [x] Dateisystem (`/vol/content`, `/vol/save`)
-- [x] Echte MEM-Heaps (Expanded/Frame/Default)
-- [x] Fenster (SDL3), TV-Bild + GamePad-Bild, F2 tauscht die Ansicht
-- [x] Eingabe: Controller, Maus/Tastatur, Belegung im Spiel ändern (F1), weitere Controller als Wiimotes
-- [x] Mikrofon (GamePad-Mikro über das PC-Mikrofon)
-- [~] GX2: Speichergrößen, Clear, Scan-Buffer, VSync (noch keine echten Draw-Calls)
-- [ ] GX2 → Vulkan/OpenGL mit Latte-Shader-Übersetzung (richtiges Bild)
-- [ ] Online-Multiplayer
+- [x] Load RPX, relocations, 99,749 functions to C++
+- [x] Game runs up to graphics initialization
+- [x] Threads, mutexes, events, message queues, alarms
+- [x] File system (`/vol/content`, `/vol/save`)
+- [x] Real MEM heaps (Expanded/Frame/Default)
+- [x] Window (SDL3), TV image + GamePad image, F2 swaps the view
+- [x] Input: controllers, mouse/keyboard, remapping in-game (F1), additional controllers as Wiimotes
+- [x] Microphone (GamePad mic via the PC microphone)
+- [~] GX2: memory sizes, clear, scan buffer, VSync (no real draw calls yet)
+- [ ] GX2 → Vulkan/OpenGL with Latte shader translation (proper image)
+- [ ] Online multiplayer
 
-## Steuerung (Standard)
+## Controls (default)
 
-| GamePad | Tastatur | Controller |
+| GamePad | Keyboard | Controller |
 |---|---|---|
-| Linker Stick | W A S D | linker Stick |
-| Rechter Stick | I J K L | rechter Stick |
-| A / B / X / Y | Enter / Rücktaste / X / Y | rechts / unten / oben / links |
-| L / R / ZL / ZR | Q / E / 1 / 3 | Schultertasten / Trigger |
+| Left stick | W A S D | Left stick |
+| Right stick | I J K L | Right stick |
+| A / B / X / Y | Enter / Backspace / X / Y | Right / Down / Up / Left |
+| L / R / ZL / ZR | Q / E / 1 / 3 | Shoulder buttons / Triggers |
 | + / − / HOME | P / M / H | Start / Back / Guide |
-| Touchscreen | Maus auf dem GamePad-Bild | – |
+| Touchscreen | Mouse on the GamePad image | – |
 
-**F1** öffnet im Spiel das Menü zum Umbelegen (wird in `controls.ini` gespeichert), dort lässt sich auch das Mikrofon an/aus schalten. **F2** zeigt das GamePad-Bild groß. Weitere Controller werden als Wiimotes (mit Nunchuk) erkannt.
+**F1** opens the in-game remapping menu (saved to `controls.ini`), where you can also toggle the microphone on/off. **F2** shows the GamePad image large. Additional controllers are detected as Wiimotes (with Nunchuk).
 
-## Debuggen
+## Debugging
 
-- `NL_TRACE_HLE=1`: jeden Aufruf einer Systemfunktion loggen
-- `NL_TRACE_FS=1`: Dateizugriffe loggen
-- CMake `-DNL_TRACE_FUNCS=ON` + `NL_DUMP_ON=<Funktionsname>`: die letzten 64 Spielfunktionen ausgeben, wenn eine Systemfunktion aufgerufen wird
+- `NL_TRACE_HLE=1`: log every system function call
+- `NL_TRACE_FS=1`: log file accesses
+- CMake `-DNL_TRACE_FUNCS=ON` + `NL_DUMP_ON=<function name>`: print the last 64 game functions when a system function is called
 
 
-## NintendoLand.exe (eigenes Programm)
+## NintendoLand.exe (standalone program)
 
-Wie bei Zelda64Recomp: eigene .exe mit eigenem Fenster, eigenem Icon und eigenen Einstellungen.
-Der Launcher baut sie ueber **Spiel bauen** und startet sie mit **SPIELEN** direkt ins Spiel.
+Like Zelda64Recomp: its own .exe with its own window, its own icon and its own settings.
+The launcher builds it via **Build game** and launches it straight into the game with **PLAY**.
 
-- Code: `frontend/main.cpp` (Win32-Fenster, Einstellungen, Eingabe), Build: `frontend/nl_frontend.cmake`
-- Unterbau: Cemus Kern-Bibliotheken (MPL-2.0) fuer Cafe-OS-Funktionen, Vulkan-Grafik, Audio und Controller.
-  Cemus Oberflaeche (wxWidgets) wird nicht benutzt.
-- Einstellungen: `nl_data/nl_settings.ini` neben der .exe (schreibt der Launcher unter *Einstellungen*)
-- Tasten im Spiel: **F11** / **Alt+Enter** Vollbild, **Tab** TV/GamePad-Bild wechseln, Maus = Touchscreen
-- Controller werden automatisch erkannt: der erste ist das GamePad, weitere werden Wiimotes.
+- Code: `frontend/main.cpp` (Win32 window, settings, input), build: `frontend/nl_frontend.cmake`
+- Foundation: Cemu's core libraries (MPL-2.0) for Cafe OS functions, Vulkan graphics, audio and controllers.
+  Cemu's UI (wxWidgets) is not used.
+- Settings: `nl_data/nl_settings.ini` next to the .exe (written by the launcher under *Settings*)
+- In-game keys: **F11** / **Alt+Enter** fullscreen, **Tab** switch between TV/GamePad image, mouse = touchscreen
+- Controllers are detected automatically: the first one is the GamePad, any others become Wiimotes.
