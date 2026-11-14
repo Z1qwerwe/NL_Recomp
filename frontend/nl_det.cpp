@@ -25,7 +25,8 @@ extern std::atomic<uint64> g_nl_cnt[8];
 extern void (*g_nl_det_tick)();
 extern void (*g_nl_det_idle)();
 void NL_Det_SignalVsync();
-bool NL_IPC_AnyPending();
+int NL_IPC_PendingCount();
+int NL_Legacy_PendingCount();
 
 static constexpr uint64 kClock = 1243125000ull;                 // Espresso-Takt
 static constexpr uint64 kVsync = kClock * 1001ull / 60000ull;   // 59.94 Hz
@@ -90,8 +91,16 @@ static void det_tick() {
 
 // wird aufgerufen, wenn kein Spiel-Thread laufbereit ist
 static void det_idle() {
-    if (NL_IPC_AnyPending()) {
-        // auf System-Antworten warten, ohne die Uhr weiterzudrehen
+    // Auf offene System-Antworten warten, ohne die Uhr weiterzudrehen. Dauer-Anfragen (warten
+    // absichtlich auf ein Ereignis) blockieren nach 200 ms nicht mehr.
+    static int s_last_pending = 0;
+    static std::chrono::steady_clock::time_point s_pending_since;
+    const int pending = NL_IPC_PendingCount() + NL_Legacy_PendingCount();
+    if (pending != s_last_pending) {
+        s_last_pending = pending;
+        s_pending_since = std::chrono::steady_clock::now();
+    }
+    if (pending > 0 && std::chrono::steady_clock::now() - s_pending_since < std::chrono::milliseconds(200)) {
         std::this_thread::sleep_for(std::chrono::microseconds(50));
         return;
     }

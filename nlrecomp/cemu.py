@@ -270,7 +270,7 @@ def _patch_all(cemu_dir, log):
                 '#include "coreinit_MessageQueue.h"\n' + EXT +
                 "#include <set>\n// Nintendo Land Recomp: offene IPC-Anfragen im deterministischen Modus\n"
                 "static std::mutex s_nl_ipc_mtx;\nstatic std::set<const void*> s_nl_ipc_pending, s_nl_ipc_long;\n"
-                "bool NL_IPC_AnyPending() { std::lock_guard l(s_nl_ipc_mtx); return !s_nl_ipc_pending.empty(); }\n", log)
+                "int NL_IPC_PendingCount() { std::lock_guard l(s_nl_ipc_mtx); return (int)s_nl_ipc_pending.size(); }\n", log)
     _patch_file(ipc, "\t\tiosu::kernel::IPCSubmitFromCOS(coreIndex, command);\n\t}\n",
                 "\t\tif (g_nl_det) { std::lock_guard l(s_nl_ipc_mtx); s_nl_ipc_pending.insert(command); g_nl_cnt[0]++; }\n"
                 "\t\tiosu::kernel::IPCSubmitFromCOS(coreIndex, command);\n"
@@ -311,6 +311,17 @@ def _patch_all(cemu_dir, log):
                 "\t\t\t\twhile (s_nl_notified.load() < s_currentRetireMarker)\n\t\t\t\t{\n"
                 "\t\t\t\t\tif (std::chrono::steady_clock::now() - t0 > std::chrono::seconds(2)) { cemuLog_log(LogType::Force, \"NL-DET: GPU-Wartezeit ueberschritten\"); break; }\n"
                 "\t\t\t\t\tstd::this_thread::yield();\n\t\t\t\t}\n\t\t\t}\n", log)
+    # 10. Deterministischer Modus: aeltere IOSU-Anfragen (ACT/BOSS/MCP...) mitzaehlen, Uhr wartet auf sie
+    io = os.path.join(src, "Cafe", "IOSU", "legacy", "iosu_ioctl.cpp")
+    _patch_file(io, '#include "util/helpers/Semaphore.h"\n',
+                '#include "util/helpers/Semaphore.h"\n' + EXT +
+                "std::atomic<int> g_nl_legacy_pending{0}; // Nintendo Land Recomp\n"
+                "int NL_Legacy_PendingCount() { return g_nl_legacy_pending.load(); }\n", log)
+    _patch_file(io, "\t_ioctlRingbufferSemaphore[ioctlHandle].increment();\n\tcoreinit::__OSSuspendThreadInternal(coreinit::OSGetCurrentThread());\n",
+                "\tif (g_nl_det) g_nl_legacy_pending++; // Nintendo Land Recomp\n"
+                "\t_ioctlRingbufferSemaphore[ioctlHandle].increment();\n\tcoreinit::__OSSuspendThreadInternal(coreinit::OSGetCurrentThread());\n", log)
+    _patch_file(io, "\tcoreinit::OSResumeThread(ioQueueEntry->ppcThread);\n}\n",
+                "\tcoreinit::OSResumeThread(ioQueueEntry->ppcThread);\n\tif (g_nl_det) g_nl_legacy_pending--; // Nintendo Land Recomp\n}\n", log)
     fu = os.path.join(cemu_dir, "src", "util", "Fiber", "FiberUnix.cpp")
     if os.path.isfile(fu):
         _patch_file(fu, "const size_t stackSize = 2 * 1024 * 1024;",
