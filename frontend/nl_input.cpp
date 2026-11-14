@@ -12,6 +12,7 @@
 #include "input/InputManager.h"
 #include "input/api/Controller.h"
 #include "input/emulated/VPADController.h"
+#include "input/emulated/WiimoteController.h"
 
 #include <Windows.h>
 #include <fstream>
@@ -470,8 +471,12 @@ void nl_input_hotplug() {
             fix_face_buttons();
             cemuLog_log(LogType::Force, "Nintendo Land: Controller als GamePad: {}", pad->display_name());
         } else if (s_next_wiimote <= 4) {
+            pad->connect();   // wie beim GamePad: SDL-Pad wirklich oeffnen
             auto wiimote = im.set_controller(s_next_wiimote, EmulatedController::Type::Wiimote, pad);
             wiimote->set_default_mapping(pad);
+            // Nintendo Land erwartet Wiimote + Nunchuk (+ MotionPlus fuer Zelda/Takamaru)
+            if (auto wm = std::dynamic_pointer_cast<WiimoteController>(wiimote))
+                wm->set_device_type(kWAPDevMPLSFreeStyle);
             cemuLog_log(LogType::Force, "Nintendo Land: Controller als Wiimote {}: {}", s_next_wiimote, pad->display_name());
             s_next_wiimote++;
         }

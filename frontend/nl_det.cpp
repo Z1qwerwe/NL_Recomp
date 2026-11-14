@@ -63,7 +63,7 @@ static void log_hash_detail(uint64 vsync) {
     std::string line;
     auto add = [&](uint32 start, uint32 end, uint32 step) {
         for (uint64 a = start; a < end; a += step)
-            line += fmt::format(" {:08x}:{:04x}", (uint32)a, (uint32)(hash_block((uint32)a, step) & 0xFFFF));
+            line += fmt::format(" {:08x}:{:016x}", (uint32)a, hash_block((uint32)a, step));
     };
     add(0x10000000, 0x50000000, 0x1000000);   // MEM2 in 16-MB-Bloecken
     add(0xF4000000, 0xF6000000, 0x200000);    // MEM1 in 2-MB-Bloecken

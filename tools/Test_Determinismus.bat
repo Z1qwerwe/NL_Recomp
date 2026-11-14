@@ -17,6 +17,7 @@ robocopy "nl_data\mlc01" "nl_data\_det_backup" /MIR /NFL /NDL /NJH /NJS >nul
 echo.
 echo Lauf 1 von 2 laeuft (ca. 1 Minute). Bitte NICHTS druecken, Maus weg vom Fenster.
 start /wait "" NintendoLand.exe "%RPX%"
+echo Lauf 1 Exitcode %errorlevel% > "nl_data\det_info.txt"
 copy /y "nl_data\log.txt" "nl_data\det_lauf1.txt" >nul
 
 echo Stelle Spielstand wieder her ...
@@ -25,6 +26,7 @@ robocopy "nl_data\_det_backup" "nl_data\mlc01" /MIR /NFL /NDL /NJH /NJS >nul
 echo.
 echo Lauf 2 von 2 laeuft (ca. 1 Minute). Bitte wieder NICHTS druecken.
 start /wait "" NintendoLand.exe "%RPX%"
+echo Lauf 2 Exitcode %errorlevel% >> "nl_data\det_info.txt"
 copy /y "nl_data\log.txt" "nl_data\det_lauf2.txt" >nul
 
 robocopy "nl_data\_det_backup" "nl_data\mlc01" /MIR /NFL /NDL /NJH /NJS >nul

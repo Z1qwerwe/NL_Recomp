@@ -328,6 +328,15 @@ def _patch_all(cemu_dir, log):
                 "\t_ioctlRingbufferSemaphore[ioctlHandle].increment();\n\tcoreinit::__OSSuspendThreadInternal(coreinit::OSGetCurrentThread());\n", log)
     _patch_file(io, "\tcoreinit::OSResumeThread(ioQueueEntry->ppcThread);\n}\n",
                 "\tcoreinit::OSResumeThread(ioQueueEntry->ppcThread);\n\tif (g_nl_det) g_nl_legacy_pending--; // Nintendo Land Recomp\n}\n", log)
+    # 11. Deterministischer Modus: JIT kompiliert synchron statt im Hintergrund-Thread
+    #     (sonst laeuft eine Funktion je nach Timing mal interpretiert, mal kompiliert -> andere Zyklen)
+    rc = os.path.join(src, "Cafe", "HW", "Espresso", "Recompiler", "PPCRecompiler.cpp")
+    _patch_file(rc, "#if PPCREC_FORCE_SYNCHRONOUS_COMPILATION\nstatic std::mutex s_singleRecompilationMutex;\n#endif\n",
+                "static std::mutex s_singleRecompilationMutex;\nextern bool g_nl_det; // Nintendo Land Recomp\n", log)
+    _patch_file(rc, "{\n#if PPCREC_FORCE_SYNCHRONOUS_COMPILATION\n\tif (ppcRecompilerInstanceData->ppcRecompilerDirectJumpTable[enterAddress / 4] != PPCRecompiler_leaveRecompilerCode_unvisited)\n\t\treturn;\n",
+                "{\n\tif (g_nl_det) { // Nintendo Land Recomp: synchron kompilieren\n\tif (ppcRecompilerInstanceData->ppcRecompilerDirectJumpTable[enterAddress / 4] != PPCRecompiler_leaveRecompilerCode_unvisited)\n\t\treturn;\n", log)
+    _patch_file(rc, "\ts_singleRecompilationMutex.unlock();\n\treturn;\n#endif\n",
+                "\ts_singleRecompilationMutex.unlock();\n\treturn;\n\t} // Nintendo Land Recomp\n", log)
     fu = os.path.join(cemu_dir, "src", "util", "Fiber", "FiberUnix.cpp")
     if os.path.isfile(fu):
         _patch_file(fu, "const size_t stackSize = 2 * 1024 * 1024;",

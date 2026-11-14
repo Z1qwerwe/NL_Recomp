@@ -449,6 +449,73 @@ static HWND make_window(const wchar_t* title, int w, int h) {
 }
 
 // ===========================================================================
+// ---- Stack-Overflow-Melder: der normale Crash-Log braucht zu viel Stack, deshalb schreibt
+// ein vorbereiteter Helfer-Thread (eigener Stack) den Bericht nach nl_data/crash_stack.txt
+#include <DbgHelp.h>
+static void* s_so_frames[62];
+static USHORT s_so_count = 0;
+static DWORD s_so_tid = 0;
+static uint32 s_so_guest_pc = 0, s_so_guest_lr = 0;
+static void* s_so_addr = nullptr;
+static ULONG_PTR s_so_lo = 0, s_so_hi = 0; static bool s_so_fiber = false;
+static HANDLE s_so_go = nullptr, s_so_done = nullptr;
+static std::wstring s_so_path;
+
+static DWORD WINAPI so_reporter(void*)
+{
+    WaitForSingleObject(s_so_go, INFINITE);
+    std::string out = fmt::format("Stack Overflow in Thread {}  Adresse {}\nSpiel-PC {:08x}  LR {:08x}\nStack {} KB, Fiber {}\n",
+                                  s_so_tid, s_so_addr, s_so_guest_pc, s_so_guest_lr, (s_so_hi - s_so_lo) / 1024, s_so_fiber);
+    HANDLE proc = GetCurrentProcess();
+    SymSetOptions(SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS | SYMOPT_LOAD_LINES);
+    wchar_t exe[MAX_PATH]; GetModuleFileNameW(nullptr, exe, MAX_PATH);
+    std::string dir = fs::path(exe).parent_path().string();
+    SymInitialize(proc, dir.c_str(), TRUE);
+    const DWORD64 base = (DWORD64)GetModuleHandleW(nullptr);
+    alignas(SYMBOL_INFO) char buf[sizeof(SYMBOL_INFO) + 512];
+    for (USHORT i = 0; i < s_so_count; i++) {
+        DWORD64 a = (DWORD64)s_so_frames[i];
+        SYMBOL_INFO* si = (SYMBOL_INFO*)buf;
+        memset(buf, 0, sizeof(buf)); si->SizeOfStruct = sizeof(SYMBOL_INFO); si->MaxNameLen = 511;
+        DWORD64 disp = 0;
+        IMAGEHLP_LINE64 ln{}; ln.SizeOfStruct = sizeof(ln); DWORD ld = 0;
+        std::string name = SymFromAddr(proc, a, &disp, si) ? std::string(si->Name) : "?";
+        std::string where = SymGetLineFromAddr64(proc, a, &ld, &ln) ? fmt::format(" ({}:{})", ln.FileName, ln.LineNumber) : "";
+        std::string off = (a >= base && a < base + 0x10000000) ? fmt::format(" [exe+{:x}]", a - base) : "";
+        out += fmt::format("  #{:02d} {:016x}{} {}{}\n", i, a, off, name, where);
+    }
+    HANDLE f = CreateFileW(s_so_path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, 0, nullptr);
+    if (f != INVALID_HANDLE_VALUE) { DWORD w; WriteFile(f, out.data(), (DWORD)out.size(), &w, nullptr); CloseHandle(f); }
+    SetEvent(s_so_done);
+    return 0;
+}
+
+static LONG WINAPI so_handler(PEXCEPTION_POINTERS e)
+{
+    if (e->ExceptionRecord->ExceptionCode != EXCEPTION_STACK_OVERFLOW) return EXCEPTION_CONTINUE_SEARCH;
+    static LONG once = 0;
+    if (InterlockedExchange(&once, 1)) return EXCEPTION_CONTINUE_SEARCH;
+    s_so_tid = GetCurrentThreadId();
+    GetCurrentThreadStackLimits(&s_so_lo, &s_so_hi);
+    s_so_fiber = IsThreadAFiber();
+    s_so_addr = e->ExceptionRecord->ExceptionAddress;
+    s_so_frames[0] = (void*)e->ContextRecord->Rip;
+    s_so_count = 1 + RtlCaptureStackBackTrace(0, 61, s_so_frames + 1, nullptr);
+    if (PPCInterpreter_t* h = PPCInterpreter_getCurrentInstance()) { s_so_guest_pc = h->instructionPointer; s_so_guest_lr = h->spr.LR; }
+    SetEvent(s_so_go);
+    WaitForSingleObject(s_so_done, 10000);
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+
+static void install_stack_overflow_reporter(const fs::path& data_dir)
+{
+    s_so_path = (data_dir / "crash_stack.txt").wstring();
+    s_so_go = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    s_so_done = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    CreateThread(nullptr, 1024 * 1024, so_reporter, nullptr, 0, nullptr);
+    AddVectoredExceptionHandler(1, so_handler);
+}
+
 int main(int argc, char* argv[]) {
     CoInitializeEx(nullptr, COINIT_MULTITHREADED | COINIT_DISABLE_OLE1DDE);
     // Spiel-Pfad: erstes Argument (Lunch.rpx oder Spielordner)
@@ -499,6 +566,7 @@ int main(int argc, char* argv[]) {
     AES128_init();
     PPCTimer_init();
     ExceptionHandler_Init();
+    install_stack_overflow_reporter(ActiveSettings::GetUserDataPath());
     WSADATA wsa;
     WSAStartup(MAKEWORD(2, 2), &wsa);
     IAudioAPI::InitializeStatic();

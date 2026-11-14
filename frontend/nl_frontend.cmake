@@ -21,6 +21,7 @@ if(MSVC)
   # Kein Konsolenfenster, aber normales main() als Einstieg
   target_link_options(NintendoLand PRIVATE
     "$<$<NOT:$<CONFIG:Debug>>:/SUBSYSTEM:WINDOWS;/ENTRY:mainCRTStartup>"
+    /DEBUG /OPT:REF /OPT:ICF
     "/INCREMENTAL:NO" "/STACK:8388608")
 endif()
 
