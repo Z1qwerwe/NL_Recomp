@@ -66,7 +66,8 @@ void nl_settings_load(const std::filesystem::path& path) {
         else if (k == "screen_layout") n.screen_layout = std::clamp(v, 0, 2);
         else if (k == "pip_size") n.pip_size = std::clamp(v, 15, 60);
         else if (k == "mouse_camera") n.mouse_camera = v != 0;
-        else if (k == "mouse_sens") n.mouse_sens = std::clamp(v, 10, 400);
+        else if (k == "mouse_sens2") n.mouse_sens = std::clamp(v, 10, 1000);
+        else if (k == "mouse_invert_y") n.mouse_invert_y = v != 0;
         else if (k == "button_layout2") n.button_layout = std::clamp(v, 0, 2);
     }
     s_startup = g_nl;
@@ -83,7 +84,7 @@ void nl_settings_save() {
       << "\nasync_shaders=" << n.async_shaders << "\nstart_view=" << n.start_view << "\nvolume=" << n.volume
       << "\npad_volume=" << n.pad_volume << "\nmic=" << n.mic << "\nmic_volume=" << n.mic_volume
       << "\nbutton_layout2=" << n.button_layout << "\ndeadzone=" << n.deadzone << "\nscreen_layout=" << n.screen_layout
-      << "\npip_size=" << n.pip_size << "\nmouse_camera=" << n.mouse_camera << "\nmouse_sens=" << n.mouse_sens << "\n";
+      << "\npip_size=" << n.pip_size << "\nmouse_camera=" << n.mouse_camera << "\nmouse_sens2=" << n.mouse_sens << "\nmouse_invert_y=" << n.mouse_invert_y << "\n";
     GetConfigHandle().Save();
 }
 
@@ -260,7 +261,8 @@ static std::vector<Row> build_tab(int tab) {
         };
         rows.push_back(onoff("Maus-Kamera", "Klick ins grosse Spielbild faengt die Maus ein: dann dreht sie die Kamera wie der rechte Stick und der Zeiger ist weg. "
                              "Esc oder Alt gibt sie wieder frei. Ein Klick aufs GamePad-Bild ist immer ein Touch.", &n.mouse_camera, d.mouse_camera));
-        rows.push_back(percent("Maus-Empfindlichkeit", "Wie schnell sich die Kamera mit der Maus dreht.", &n.mouse_sens, d.mouse_sens, 10, 400, 10));
+        rows.push_back(percent("Maus-Empfindlichkeit", "Wie schnell sich die Kamera mit der Maus dreht.", &n.mouse_sens, d.mouse_sens, 10, 1000, 10));
+        rows.push_back(onoff("Maus hoch/runter umkehren", "Maus nach oben = nach unten schauen (wie bei Flugspielen).", &n.mouse_invert_y, d.mouse_invert_y));
         rows.push_back(percent("Stick-Totzone", "Wie weit der Stick bewegt werden muss, bevor das Spiel reagiert.", &n.deadzone, d.deadzone, 0, 60, 5));
         rows.push_back(header("Belegung"));
         for (int i = 0; i < kNLActionCount; i++) {

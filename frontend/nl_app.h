@@ -35,6 +35,7 @@ struct NLSettings {
     int button_layout = 0;       // 0 automatisch, 1 Nintendo (A rechts), 2 A unten (Xbox/PlayStation)
     bool mouse_camera = true;    // Maus dreht die Kamera (rechter Stick), Zeiger versteckt
     int mouse_sens = 100;        // Prozent
+    bool mouse_invert_y = false; // Maus hoch = nach unten schauen
     int deadzone = 20;           // Prozent
 };
 extern NLSettings g_nl;

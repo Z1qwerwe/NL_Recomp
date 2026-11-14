@@ -359,9 +359,10 @@ public:
         // Maus-Kamera: Bewegung seit der letzten Abfrage wirkt wie der rechte Stick
         int dx = s_mouse_dx.exchange(0), dy = s_mouse_dy.exchange(0);
         if (g_nl.mouse_camera && !nl_mouse_pointer_mode()) {
-            const float k = 0.06f * g_nl.mouse_sens / 100.0f;
+            const float k = 0.30f * g_nl.mouse_sens / 100.0f;
+            const float ky = g_nl.mouse_invert_y ? -k : k;
             out.rotation.x = std::clamp(out.rotation.x + dx * k, -1.0f, 1.0f);
-            out.rotation.y = std::clamp(out.rotation.y - dy * k, -1.0f, 1.0f);
+            out.rotation.y = std::clamp(out.rotation.y - dy * ky, -1.0f, 1.0f);
         }
         return out;
     }
@@ -422,6 +423,7 @@ void nl_input_hotplug() {
         pad->set_axis_settings(ControllerBase::AxisSetting(dz));
         pad->set_rotation_settings(ControllerBase::AxisSetting(dz));
         if (as_gamepad) {
+            pad->connect();   // SDL-Gamepad oeffnen (macht Cemu sonst beim Einhaengen ins GamePad)
             fix_face_buttons();
             cemuLog_log(LogType::Force, "Nintendo Land: Controller als GamePad: {}", pad->display_name());
         } else if (s_next_wiimote <= 4) {
@@ -431,9 +433,10 @@ void nl_input_hotplug() {
             s_next_wiimote++;
         }
     }
-    // Totzone live aktualisieren
+    // Totzone live aktualisieren, Verbindung pruefen (z. B. Kabel kurz raus)
     std::scoped_lock l(s_pad_mutex);
     if (s_gamepad) {
+        if (!s_gamepad->is_connected()) s_gamepad->connect();
         float dz = g_nl.deadzone / 100.0f;
         s_gamepad->set_axis_settings(ControllerBase::AxisSetting(dz));
         s_gamepad->set_rotation_settings(ControllerBase::AxisSetting(dz));
