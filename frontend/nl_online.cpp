@@ -297,7 +297,7 @@ void nl_online_init() {
     g_nl_stream_frame = on_frame;
     g_nl_stream_audio = on_audio;
     if (!nl_steam_available()) {
-        s_status = "Online ist in diesem Build nicht dabei (Steamworks SDK fehlt).";
+        s_status = "steam_api64.dll fehlt neben dem Spiel - im Launcher neu bauen.";
         return;
     }
     SetEnvironmentVariableW(L"SteamAppId", L"480");

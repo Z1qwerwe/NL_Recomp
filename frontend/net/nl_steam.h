@@ -1,6 +1,6 @@
 // Nintendo Land Recomp - Steam: Freundesliste, Raeume mit Code, Einladungen, P2P-Nachrichten.
-// Laeuft ueber die Steam-Test-App "Spacewar" (AppID 480). Ohne Steamworks SDK (NL_STEAM nicht
-// definiert) sind alle Funktionen harmlose Platzhalter und nl_steam_available() ist false.
+// Laeuft ueber die Steam-Test-App "Spacewar" (AppID 480). Laedt steam_api64.dll zur Laufzeit; fehlt sie (oder
+// passt sie nicht), sind alle Funktionen harmlos und nl_steam_available() ist false.
 #pragma once
 #include <cstdint>
 #include <functional>
@@ -16,7 +16,7 @@ struct NLFriend {
     std::string status;      // Text wie "Hostet einen Raum"
 };
 
-bool nl_steam_available();                 // mit SDK gebaut?
+bool nl_steam_available();                 // steam_api64.dll da und passend?
 bool nl_steam_init();                      // Steam verbinden (false: Steam laeuft nicht)
 void nl_steam_shutdown();
 bool nl_steam_ok();                        // verbunden

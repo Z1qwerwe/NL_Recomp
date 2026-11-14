@@ -263,8 +263,7 @@ static void build_online(std::vector<Row>& rows) {
     const NLSettings d{};
     if (!nl_online_available()) {
         rows.push_back(header("Online"));
-        rows.push_back(info("Online", "nicht dabei", "Dieser Build wurde ohne Steamworks SDK gebaut. Lege das SDK in den Ordner "
-                            "'steamworks_sdk' neben dem Launcher und baue das Spiel neu."));
+        rows.push_back(info("Online", "nicht verfuegbar", "steam_api64.dll fehlt neben NintendoLand.exe. Baue das Spiel im Launcher neu - die Datei wird dabei mitkopiert."));
         return;
     }
     if (!nl_online_steam_ok()) {

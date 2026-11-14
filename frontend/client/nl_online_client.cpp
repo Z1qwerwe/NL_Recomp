@@ -829,7 +829,7 @@ int main(int argc, char* argv[]) {
         if (!steam) {
             ui_message(size, big, "Steam laeuft nicht",
                        nl_steam_available() ? "Online laeuft ueber Steam (Freundesliste, Codes, Verbindung). Starte Steam und dann NLOnline neu."
-                                            : "Dieser Build wurde ohne Steamworks SDK gebaut.",
+                                            : "steam_api64.dll fehlt neben NLOnline.exe. Entpacke das ZIP bitte komplett.",
                        false, false);
         } else if (scr == Screen::Home) {
             ui_home(size, big);

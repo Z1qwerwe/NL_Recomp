@@ -42,39 +42,24 @@ endif()
 message(STATUS "Nintendo Land Recomp: eigenes Programm NintendoLand")
 
 # ---------------------------------------------------------------------------
-# Online: Steamworks SDK (optional). Ordner "steamworks_sdk" neben dem Projekt;
-# das ZIP von Valve enthaelt einen Unterordner "sdk", beides geht.
+# Online ueber Steam: steam_api64.dll (Valve-Redistributable) liegt in third_party/steam und wird
+# zur Laufzeit geladen - zum Bauen ist kein Steamworks SDK noetig.
 # ---------------------------------------------------------------------------
-set(NL_STEAM_SDK "${NL_FRONTEND_DIR}/../steamworks_sdk" CACHE PATH "Pfad zum Steamworks SDK")
-if(EXISTS "${NL_STEAM_SDK}/sdk/public/steam/steam_api.h")
-  set(NL_STEAM_SDK "${NL_STEAM_SDK}/sdk")
-endif()
-set(NL_HAS_STEAM OFF)
-if(WIN32 AND EXISTS "${NL_STEAM_SDK}/public/steam/steam_api.h" AND EXISTS "${NL_STEAM_SDK}/redistributable_bin/win64/steam_api64.lib")
-  set(NL_HAS_STEAM ON)
-  message(STATUS "Nintendo Land Recomp: Online mit Steamworks SDK aus ${NL_STEAM_SDK}")
-else()
-  message(STATUS "Nintendo Land Recomp: kein Steamworks SDK gefunden - Online ist aus")
-endif()
-
+set(NL_STEAM_DLL "${NL_FRONTEND_DIR}/../third_party/steam/steam_api64.dll")
 function(nl_use_steam target)
-  if(NOT NL_HAS_STEAM)
-    return()
+  if(EXISTS "${NL_STEAM_DLL}")
+    add_custom_command(TARGET ${target} POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different "${NL_STEAM_DLL}" "$<TARGET_FILE_DIR:${target}>")
   endif()
-  target_compile_definitions(${target} PRIVATE NL_STEAM=1)
-  target_include_directories(${target} PRIVATE "${NL_STEAM_SDK}/public")
-  target_link_libraries(${target} PRIVATE "${NL_STEAM_SDK}/redistributable_bin/win64/steam_api64.lib")
-  add_custom_command(TARGET ${target} POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${NL_STEAM_SDK}/redistributable_bin/win64/steam_api64.dll" "$<TARGET_FILE_DIR:${target}>")
-  file(MAKE_DIRECTORY "${CMAKE_SOURCE_DIR}/bin")
-  file(WRITE "${CMAKE_SOURCE_DIR}/bin/steam_appid.txt" "480")   # Spacewar (Steams Test-App)
 endfunction()
+file(MAKE_DIRECTORY "${CMAKE_SOURCE_DIR}/bin")
+file(WRITE "${CMAKE_SOURCE_DIR}/bin/steam_appid.txt" "480")   # Spacewar (Steams Test-App)
 nl_use_steam(NintendoLand)
 
 # ---------------------------------------------------------------------------
 # NLOnline.exe: Mitspielen bei einem Freund (ohne Spielcode)
 # ---------------------------------------------------------------------------
-if(WIN32 AND NL_HAS_STEAM)   # ohne Steam hat der Client keinen Sinn
+if(WIN32)
   set(NL_IMGUI "${CMAKE_SOURCE_DIR}/dependencies/imgui")
   add_executable(NLOnline
     ${NL_FRONTEND_DIR}/client/nl_online_client.cpp ${NL_NET_SOURCES}

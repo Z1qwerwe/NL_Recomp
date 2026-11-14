@@ -1,75 +1,49 @@
 # Nintendo Land Recomp
 
-An unofficial attempt to run **Nintendo Land (Wii U)** natively on PC via static recompilation, with the goal of adding online multiplayer.
+An unofficial project that runs **Nintendo Land (Wii U)** natively on PC — its own `NintendoLand.exe` with its own window, in-game settings menu, controller support and **online play with friends over Steam**.
 
-> This repo contains **no** game files and no code generated from the game.
-> You need your own dump of Nintendo Land (e.g. made with dumpling from your Wii U).
+> **No game files and no code generated from the game are included — not in this repo and not in any release.**
+> You need your own dump of Nintendo Land (e.g. made with dumpling from your Wii U). The launcher builds the game on your PC from your dump.
 
-## Two approaches
+## Quick start
 
-1. **Cemu version (recommended):** Cemu (MPL-2.0) provides the operating system, graphics (Vulkan/OpenGL), audio, controllers and microphone. Instead of Cemu's CPU emulation, the recompiled native game functions (`cemu/aot/`) are run. In the launcher: **Build Cemu version**, then **PLAY**.
-2. **Custom runtime:** a fully custom implementation (`runtime/`), good for testing and debugging, but no real graphics yet.
+1. Install **Python 3.8+** (python.org, tick "Add to PATH").
+2. Download the release ZIP, extract it, run **`start.bat`**.
+3. Pick your extracted game folder (the one with `code/`, `content/`, `meta/`).
+4. Click **Build game**. If Git or Visual Studio Build Tools are missing, the launcher offers to install them (via winget, ~6–8 GB, asks for admin rights once). The first build takes a while.
+5. Click **PLAY**.
 
-## Structure
+## In-game
+
+- **Esc** (or the Home/Guide button) opens the menu: Screen, Game, Sound, Controls, **Online**
+- **F11** / **Alt+Enter** fullscreen · **Tab** swap TV/GamePad image · click into the GamePad image = touch
+- Click into the big image to capture the mouse as camera (Esc releases it)
+- Controllers: Xbox, PlayStation (incl. gyro), Switch Pro … The first one is the GamePad, every further one becomes a Wiimote (with Nunchuk)
+
+## Online with friends
+
+The host runs the game; friends see the host's TV image and play as **Wiimote players 2–5**. Friends **don't need the game**.
+
+- **Host:** Esc → **Online** → *Open room* → share the 6-letter code (or invite friends from the friend list there).
+- **Friends:** run **NLOnline.exe** (from `NLOnline_fuer_Freunde.zip` in the release or the host's `bin` folder), enter the code or click *Join* next to the host in the friend list.
+- Needs Steam running on both sides (uses Steam's test app "Spacewar", AppID 480, for friends, codes and NAT traversal).
+- Upload per friend: ~3.5 / 6 / 12 Mbit/s (Low / Medium / High in the Online menu).
+
+## How it works
+
+- `recomp/` statically recompiles the game's PowerPC code to C++ (on your PC, from your dump).
+- Cemu's core libraries (MPL-2.0) provide the Wii U OS, graphics (Vulkan), audio and input; Cemu's UI isn't used. `nlrecomp/cemu.py` fetches a pinned Cemu version and applies small patches.
+- `frontend/` is the game program (window, menu, input, online), `frontend/client/` is NLOnline.exe.
 
 | Folder | Contents |
 |---|---|
-| `launcher.py`, `nlrecomp/` | Launcher (Python/Tkinter): detect the game, analyze, collect shaders, recompile, build, launch |
-| `recomp/` | Recompiler: `.rpx` → C++ (PowerPC/Espresso incl. paired singles) |
-| `runtime/` | Custom C++ runtime: memory, HLE of the Wii U system libraries (coreinit, FS, threads, …) |
-| `cemu/aot/` | Cemu integration: headers for the generated code, `nl_aot_glue.cpp`, CMake integration |
-| `nlrecomp/cemu.py` | Fetches Cemu (pinned version), applies the small patches and builds everything |
-| `aroma-plugin/` | Experimental Aroma plugin for netplay on real hardware |
-| `tools/` | Helper tools (RPX import analysis) |
+| `launcher.py`, `nlrecomp/` | Launcher: detect the game, recompile, install build tools, build, launch |
+| `recomp/` | Recompiler `.rpx` → C++ |
+| `cemu/aot/` | Integration of the recompiled code into Cemu |
+| `frontend/` | NintendoLand.exe and NLOnline.exe |
+| `third_party/steam/` | `steam_api64.dll` (Valve redistributable) |
+| `runtime/`, `aroma-plugin/`, `tools/` | Experiments and helper tools |
 
-## Usage
+## Legal
 
-1. Install Python 3.8+ and Visual Studio 2022 with "Desktop development with C++".
-2. Run `start.bat` and select the extracted game folder (containing `code/`, `content/`, `meta/`).
-3. **Recompile + Build**, then **PLAY**.
-
-## Status
-
-- [x] Load RPX, relocations, 99,749 functions to C++
-- [x] Game runs up to graphics initialization
-- [x] Threads, mutexes, events, message queues, alarms
-- [x] File system (`/vol/content`, `/vol/save`)
-- [x] Real MEM heaps (Expanded/Frame/Default)
-- [x] Window (SDL3), TV image + GamePad image, F2 swaps the view
-- [x] Input: controllers, mouse/keyboard, remapping in-game (F1), additional controllers as Wiimotes
-- [x] Microphone (GamePad mic via the PC microphone)
-- [~] GX2: memory sizes, clear, scan buffer, VSync (no real draw calls yet)
-- [ ] GX2 → Vulkan/OpenGL with Latte shader translation (proper image)
-- [ ] Online multiplayer
-
-## Controls (default)
-
-| GamePad | Keyboard | Controller |
-|---|---|---|
-| Left stick | W A S D | Left stick |
-| Right stick | I J K L | Right stick |
-| A / B / X / Y | Enter / Backspace / X / Y | Right / Down / Up / Left |
-| L / R / ZL / ZR | Q / E / 1 / 3 | Shoulder buttons / Triggers |
-| + / − / HOME | P / M / H | Start / Back / Guide |
-| Touchscreen | Mouse on the GamePad image | – |
-
-**F1** opens the in-game remapping menu (saved to `controls.ini`), where you can also toggle the microphone on/off. **F2** shows the GamePad image large. Additional controllers are detected as Wiimotes (with Nunchuk).
-
-## Debugging
-
-- `NL_TRACE_HLE=1`: log every system function call
-- `NL_TRACE_FS=1`: log file accesses
-- CMake `-DNL_TRACE_FUNCS=ON` + `NL_DUMP_ON=<function name>`: print the last 64 game functions when a system function is called
-
-
-## NintendoLand.exe (standalone program)
-
-Like Zelda64Recomp: its own .exe with its own window, its own icon and its own settings.
-The launcher builds it via **Build game** and launches it straight into the game with **PLAY**.
-
-- Code: `frontend/main.cpp` (Win32 window, settings, input), build: `frontend/nl_frontend.cmake`
-- Foundation: Cemu's core libraries (MPL-2.0) for Cafe OS functions, Vulkan graphics, audio and controllers.
-  Cemu's UI (wxWidgets) is not used.
-- Settings: `nl_data/nl_settings.ini` next to the .exe (written by the launcher under *Settings*)
-- In-game keys: **F11** / **Alt+Enter** fullscreen, **Tab** switch between TV/GamePad image, mouse = touchscreen
-- Controllers are detected automatically: the first one is the GamePad, any others become Wiimotes.
+Nintendo Land is © Nintendo. This project is not affiliated with Nintendo. It contains no Nintendo code or assets; you must own the game. Cemu is licensed under MPL-2.0. `steam_api64.dll` is redistributed under the Steamworks SDK terms.

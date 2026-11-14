@@ -138,7 +138,7 @@ int nl_wii_free_slots();
 void nl_online_init();                    // Steam verbinden, Hooks setzen (nach dem Spielstart)
 void nl_online_shutdown();
 bool nl_online_steam_ok();
-bool nl_online_available();               // mit Steamworks SDK gebaut?
+bool nl_online_available();               // steam_api64.dll vorhanden?
 void nl_online_open_room();               // Raum oeffnen -> Code
 void nl_online_close_room();
 bool nl_online_hosting();

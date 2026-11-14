@@ -241,7 +241,7 @@ def _pack_online_client(bin_dir, log):
         return
     files = ["NLOnline.exe", "steam_api64.dll", "steam_appid.txt"]
     if not os.path.isfile(os.path.join(bin_dir, "steam_api64.dll")):
-        log("Hinweis: Online ist aus (Steamworks SDK fehlt) - NLOnline wird ohne Steam gebaut.")
+        log("Hinweis: steam_api64.dll fehlt im bin-Ordner - Online geht so nicht.")
         return
     out = os.path.join(bin_dir, "NLOnline_fuer_Freunde.zip")
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:

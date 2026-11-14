@@ -43,7 +43,8 @@ def _round_rect(c, x0, y0, x1, y1, r, **kw):
 
 def run_gui():
     import tkinter as tk
-    from tkinter import filedialog, ttk
+    from tkinter import filedialog, messagebox, ttk
+    from nlrecomp import tools_setup
 
     settings = pipeline.load_settings()
     msgs = queue.Queue()
@@ -312,6 +313,28 @@ def run_gui():
         worker(all_steps)
 
     def do_cemu():
+        if state["busy"]:
+            return
+        # Fehlende Bau-Werkzeuge? Einmal fragen und selbst installieren.
+        missing = tools_setup.missing_tools() if os.name == "nt" else []
+        if missing:
+            names = "\n".join(f"  - {n} ({sz})" for _, n, sz in missing)
+            if not tools_setup.winget_available():
+                messagebox.showinfo("Werkzeuge fehlen",
+                                    "Zum Bauen fehlt noch:\n" + names + "\n\nBitte installieren:\n"
+                                    "  Git: https://git-scm.com/download/win\n"
+                                    "  Visual Studio 2022 mit 'Desktopentwicklung mit C++': https://visualstudio.microsoft.com/de/downloads/")
+                return
+            if not messagebox.askyesno("Werkzeuge fehlen",
+                                       "Zum Bauen fehlt noch:\n" + names +
+                                       "\n\nSoll der Launcher das jetzt automatisch installieren?\n"
+                                       "Windows fragt dabei nach Administratorrechten. Danach geht es direkt mit dem Bauen weiter."):
+                return
+            def setup_and_build():
+                tools_setup.install(missing, log, stop_fn)
+                pipeline.step_cemu_build(settings, state["game"], log, stop_fn)
+            worker(setup_and_build)
+            return
         worker(lambda: pipeline.step_cemu_build(settings, state["game"], log, stop_fn))
 
     def do_play():
