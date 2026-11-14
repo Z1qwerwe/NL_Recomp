@@ -25,3 +25,4 @@ steamworks_sdk/
 steam_api64.dll
 !third_party/steam/steam_api64.dll
 steam_appid.txt
+release/
