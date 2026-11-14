@@ -282,7 +282,8 @@ def _patch_all(cemu_dir, log):
                 "\t\t\t\t}\n\t\t\t\tstd::this_thread::yield();\n\t\t\t}\n\t\t}\n\t}\n", log)
     _patch_file(ipc, "\t\tIPCDriver_KernelCallback(ipcDriver);\n\n\t\tlock.lock();\n",
                 "\t\tIPCDriver_KernelCallback(ipcDriver);\n"
-                "\t\tif (g_nl_det) { std::lock_guard l(s_nl_ipc_mtx); for (uint32 i = 0; i < numResponses; i++) if (!s_nl_ipc_pending.erase(responseArray[i])) s_nl_ipc_long.erase(responseArray[i]); } // Nintendo Land Recomp\n"
+                "\t\tif (g_nl_det) { std::lock_guard l(s_nl_ipc_mtx); for (uint32 i = 0; i < numResponses; i++) if (!s_nl_ipc_pending.erase(responseArray[i]) && s_nl_ipc_long.erase(responseArray[i])) "
+                "cemuLog_log(LogType::Force, \"NL-DET: Dauer-Anfrage beantwortet (dev {} t={})\", (uint32)responseArray[i]->devHandle.value(), g_nl_vclock.load()); } // Nintendo Land Recomp\n"
                 "\n\t\tlock.lock();\n", log)
     acs = os.path.join(src, "config", "ActiveSettings.cpp")
     _patch_file(acs, "CPUMode ActiveSettings::GetCPUMode()\n{\n",
@@ -311,6 +312,11 @@ def _patch_all(cemu_dir, log):
                 "\t\t\t\twhile (s_nl_notified.load() < s_currentRetireMarker)\n\t\t\t\t{\n"
                 "\t\t\t\t\tif (std::chrono::steady_clock::now() - t0 > std::chrono::seconds(2)) { cemuLog_log(LogType::Force, \"NL-DET: GPU-Wartezeit ueberschritten\"); break; }\n"
                 "\t\t\t\t\tstd::this_thread::yield();\n\t\t\t\t}\n\t\t\t}\n", log)
+    # 9b. Fehlersuche: welches Systemgeraet hat welche Nummer
+    _patch_file(ipc, "\t\t\t\t\tif (response.cmdId == IPCCommandId::IOS_OPEN)\n\t\t\t\t\t\ts_openIOSHandles.push_back(response.result);\n",
+                "\t\t\t\t\tif (response.cmdId == IPCCommandId::IOS_OPEN)\n\t\t\t\t\t\ts_openIOSHandles.push_back(response.result);\n"
+                "\t\t\t\t\tif (g_nl_det && response.cmdId == IPCCommandId::IOS_OPEN) // Nintendo Land Recomp\n"
+                "\t\t\t\t\t\tcemuLog_log(LogType::Force, \"NL-DET: IOS_Open {} -> {}\", (const char*)memory_getPointerFromVirtualOffsetAllowNull(response.args[0]), (uint32)response.result.value());\n", log)
     # 10. Deterministischer Modus: aeltere IOSU-Anfragen (ACT/BOSS/MCP...) mitzaehlen, Uhr wartet auf sie
     io = os.path.join(src, "Cafe", "IOSU", "legacy", "iosu_ioctl.cpp")
     _patch_file(io, '#include "util/helpers/Semaphore.h"\n',
