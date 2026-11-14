@@ -408,7 +408,7 @@ def run_gui():
         return t
 
     tile("cemu", "Spiel bauen", do_cemu, "\u2692").pack(side="left", padx=(0, 6))
-    tile("shaders", "Shader vorbereiten", do_shaders, "\u2728", w=200).pack(side="left", padx=6)
+    tile("shaders", "Shader vorbereiten", do_shaders, "\u25C6", w=200).pack(side="left", padx=6)
     tile("stop", "Stopp", do_stop, "\u25A0", w=120).pack(side="left", padx=6)
     tile("adv", "Erweitert", open_advanced, "\u2699", w=140).pack(side="right", padx=(6, 0))
     play = GlassButton(bar, "SPIELEN", do_play, accent=True, w=210, h=58, icon="\u25B6",
