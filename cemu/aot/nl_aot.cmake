@@ -28,6 +28,7 @@ endif()
 # Die Verbindung zu Cemu
 target_sources(CemuCafe PRIVATE ${NL_AOT_DIR}/nl_aot_glue.cpp)
 target_compile_definitions(CemuCafe PRIVATE NL_AOT)
+target_include_directories(CemuCafe PRIVATE ${NL_AOT_DIR}/../../frontend)   # nl_screens.h
 target_link_libraries(CemuCafe PRIVATE NLAotGenerated)
 message(STATUS "Nintendo Land Recomp: AOT-Code aus ${NL_AOT_GENERATED}")
 

@@ -6,6 +6,7 @@
 // ohne Cemus Oberflaeche.
 #include "WindowSystem.h"
 #include "nl_app.h"
+#include "nl_screens.h"
 
 #include "Cafe/CafeSystem.h"
 #include "Cafe/GraphicPack/GraphicPack2.h"
@@ -231,20 +232,88 @@ static void restart_self() {
 }
 
 // Maus = Touchscreen des GamePads (Positionen in echten Pixeln, wie bei Cemu)
+// Maus: im Hauptfenster entweder Kamera (Zeiger versteckt) oder Zeiger (Touch auf dem GamePad-Bild, Menue)
+static bool s_mouse_left = false;
 static void update_mouse(HWND win, LPARAM lp, std::optional<bool> left, std::optional<bool> right) {
     auto& im = InputManager::instance();
-    auto& m = (win == s_pad_window) ? im.m_pad_mouse : im.m_main_mouse;
-    std::scoped_lock lock(m.m_mutex);
-    m.position = {GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
-    if (left) {
-        m.left_down = *left;
-        if (*left) m.left_down_toggle = true;
+    const int x = GET_X_LPARAM(lp), y = GET_Y_LPARAM(lp);
+    if (win == s_pad_window) {   // eigenes GamePad-Fenster: wie bisher (Cemu wertet es als Touch)
+        auto& m = im.m_pad_mouse;
+        std::scoped_lock lock(m.m_mutex);
+        m.position = {x, y};
+        if (left) { m.left_down = *left; if (*left) m.left_down_toggle = true; }
+        return;
     }
-    if (right) {
-        m.right_down = *right;
-        if (*right) m.right_down_toggle = true;
+    const bool pointer = nl_mouse_pointer_mode();
+    if (left) s_mouse_left = *left;
+    {
+        // Menue (ImGui) bekommt Position immer, Klicks nur wenn es offen ist
+        auto& m = im.m_main_mouse;
+        std::scoped_lock lock(m.m_mutex);
+        m.position = {x, y};
+        bool menu = g_nl_menu_open;
+        m.left_down = menu && s_mouse_left;
+        if (left && *left && menu) m.left_down_toggle = true;
+        if (right) m.right_down = menu && *right;
+    }
+    if (pointer) {
+        nl_mouse_touch(s_mouse_left, x, y);
+    } else {
+        nl_mouse_touch(false, x, y);
+        // Kamera-Modus: Maustasten wie Tasten (belegbar im Menue)
+        if (left) g_window_info.set_keystate(VK_LBUTTON, *left);
+        if (right) g_window_info.set_keystate(VK_RBUTTON, *right);
     }
 }
+
+// Zeiger zeigen/verstecken und im Kamera-Modus im Fenster festhalten
+static bool s_cursor_hidden = false;
+static void update_cursor() {
+    const bool hide = !nl_mouse_pointer_mode() && GetForegroundWindow() == s_window;
+    if (hide != s_cursor_hidden) {
+        s_cursor_hidden = hide;
+        if (hide) {
+            RECT rc;
+            GetClientRect(s_window, &rc);
+            MapWindowPoints(s_window, nullptr, (POINT*)&rc, 2);
+            ClipCursor(&rc);
+            nl_mouse_touch(false, 0, 0);
+        } else {
+            ClipCursor(nullptr);
+            g_window_info.set_keystate(VK_LBUTTON, false);
+            g_window_info.set_keystate(VK_RBUTTON, false);
+        }
+        POINT p;
+        GetCursorPos(&p);
+        SetCursorPos(p.x, p.y);   // loest WM_SETCURSOR aus
+    }
+}
+
+// Bildflaechen fuer TV + GamePad in einem Fenster
+static void screens_layout(int w, int h, bool drc_big, int* tv, int* drc) {
+    int big[4], small[4];
+    if (g_nl.screen_layout == 2) {
+        // nebeneinander: grosses Bild 2/3, kleines 1/3 der Breite
+        int u = std::min(w / 3, h * 16 / 18);
+        int bw = 2 * u, bh = bw * 9 / 16, sw = u, sh = sw * 9 / 16;
+        int x0 = (w - bw - sw) / 2;
+        big[0] = x0; big[1] = (h - bh) / 2; big[2] = bw; big[3] = bh;
+        small[0] = x0 + bw; small[1] = (h - sh) / 2; small[2] = sw; small[3] = sh;
+    } else {
+        // Bild-in-Bild: grosses Bild fuellt das Fenster, kleines unten rechts
+        int bw = w, bh = w * 9 / 16;
+        if (bh > h) { bh = h; bw = h * 16 / 9; }
+        big[0] = (w - bw) / 2; big[1] = (h - bh) / 2; big[2] = bw; big[3] = bh;
+        int sw = bw * std::clamp(g_nl.pip_size, 15, 60) / 100, sh = sw * 9 / 16, m = bw / 60;
+        small[0] = big[0] + bw - sw - m; small[1] = big[1] + bh - sh - m; small[2] = sw; small[3] = sh;
+    }
+    for (int k = 0; k < 4; k++) {
+        tv[k] = drc_big ? small[k] : big[k];
+        drc[k] = drc_big ? big[k] : small[k];
+        g_nl_screens.drc_rect[k] = drc[k];
+    }
+}
+
 
 static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
@@ -259,11 +328,27 @@ static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                          SWP_NOZORDER | SWP_NOACTIVATE);
         }
         if (s_window) update_window_sizes();
+        if (s_cursor_hidden) { s_cursor_hidden = false; ClipCursor(nullptr); update_cursor(); }
         return msg == WM_SIZE ? 0 : DefWindowProcW(hwnd, msg, wp, lp);
     case WM_ACTIVATEAPP:
         g_window_info.app_active = wp != 0;
         if (!wp) g_window_info.set_keystatesup();
+        update_cursor();
         return 0;
+    case WM_SETCURSOR:
+        if (LOWORD(lp) == HTCLIENT && hwnd == s_window) {
+            SetCursor(s_cursor_hidden ? nullptr : LoadCursorW(nullptr, MAKEINTRESOURCEW(32512)));
+            return TRUE;
+        }
+        break;
+    case WM_INPUT: {
+        RAWINPUT ri;
+        UINT size = sizeof(ri);
+        if (GetRawInputData((HRAWINPUT)lp, RID_INPUT, &ri, &size, sizeof(RAWINPUTHEADER)) != (UINT)-1 &&
+            ri.header.dwType == RIM_TYPEMOUSE && !(ri.data.mouse.usFlags & MOUSE_MOVE_ABSOLUTE) && s_cursor_hidden)
+            nl_mouse_add_delta(ri.data.mouse.lLastX, ri.data.mouse.lLastY);
+        return DefWindowProcW(hwnd, msg, wp, lp);
+    }
     case WM_KEYDOWN:
     case WM_SYSKEYDOWN:
         if (wp == VK_F11 || (wp == VK_RETURN && (lp & (1 << 29)))) {
@@ -285,6 +370,8 @@ static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_RBUTTONDOWN: update_mouse(hwnd, lp, {}, true); return 0;
     case WM_RBUTTONUP: update_mouse(hwnd, lp, {}, false); return 0;
     case WM_MOUSEMOVE: update_mouse(hwnd, lp, {}, {}); return 0;
+    case WM_MBUTTONDOWN: if (!nl_mouse_pointer_mode()) g_window_info.set_keystate(VK_MBUTTON, true); return 0;
+    case WM_MBUTTONUP: g_window_info.set_keystate(VK_MBUTTON, false); return 0;
     case WM_MOUSEWHEEL:
         InputManager::instance().m_mouse_wheel = (float)GET_WHEEL_DELTA_WPARAM(wp) / WHEEL_DELTA;
         return 0;
@@ -306,10 +393,16 @@ static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         }
         return 0;
     case WM_TIMER: {
+        if (wp == 2) {   // schnell: Zeiger und Bild-Modus aktuell halten
+            g_nl_screens.mode = WindowSystem::IsPadWindowOpen() ? 0 : g_nl.screen_layout;
+            update_cursor();
+            return 0;
+        }
         nl_input_hotplug();
-        const char* view = LatteGPUState.isDRCPrimary ? "GamePad-Bild" : "TV-Bild";
+        const char* view = g_nl_screens.mode ? (LatteGPUState.isDRCPrimary ? "GamePad gross" : "TV gross")
+                                             : (LatteGPUState.isDRCPrimary ? "GamePad-Bild" : "TV-Bild");
         std::string t = s_loading ? std::string("Nintendo Land - laedt ...")
-                                  : fmt::format("Nintendo Land - {:.0f} FPS - {}   |   Tab: Bild wechseln   Esc: Menue   F11: Vollbild",
+                                  : fmt::format("Nintendo Land - {:.0f} FPS - {}   |   Tab: Bilder tauschen   Alt: Mauszeiger   Esc: Menue",
                                                 s_fps.load(), view);
         SetWindowTextW(s_window, boost::nowide::widen(t).c_str());
         return 0;
@@ -438,6 +531,13 @@ int main(int argc, char* argv[]) {
     update_window_sizes();
     if (g_nl.fullscreen) set_fullscreen(true);
     SetTimer(s_window, 1, 500, nullptr);
+    SetTimer(s_window, 2, 30, nullptr);
+    // TV + GamePad in einem Fenster
+    g_nl_screens.layout = screens_layout;
+    g_nl_screens.mode = s_pad_window ? 0 : g_nl.screen_layout;
+    // Rohe Mausbewegung fuer die Maus-Kamera
+    RAWINPUTDEVICE rid{0x01, 0x02, 0, s_window};
+    RegisterRawInputDevices(&rid, 1, sizeof(rid));
 
     // Renderer (Vulkan) an unser Fenster haengen
     if (!InitializeGlobalVulkan() || !g_vulkan_available)

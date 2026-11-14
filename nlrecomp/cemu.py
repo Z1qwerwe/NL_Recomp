@@ -64,6 +64,47 @@ def _patch_file(path, old, new, log):
     log(f"  gepatcht: {os.path.relpath(path, os.path.dirname(os.path.dirname(path)))}")
 
 
+NL_COMBINED = """\t// Nintendo Land Recomp: TV- und GamePad-Bild zusammen im Hauptfenster
+\tif (g_nl_screens.mode != 0 && g_nl_screens.layout && !g_renderer->IsPadWindowActive())
+\t{
+\t\tstruct NLDrc { MPTR ptr; uint32 w, h, fmt, pitch, swz; Latte::E_HWTILEMODE tm; };
+\t\tstatic NLDrc s_drc{};
+\t\tif (renderTarget & RENDER_TARGET_DRC)
+\t\t{
+\t\t\ts_drc = { colorBufferPtr, colorBufferWidth, colorBufferHeight, colorBufferFormat, colorBufferPitch, colorBufferSwizzle, colorBufferTilemode };
+\t\t\tif (!(renderTarget & RENDER_TARGET_TV))
+\t\t\t\treturn;
+\t\t}
+\t\tLatteTextureView* drcView = nullptr;
+\t\tif (s_drc.ptr)
+\t\t\tdrcView = LatteTC_GetTextureSliceViewOrTryCreate(s_drc.ptr, MPTR_NULL, (Latte::E_GX2SURFFMT)s_drc.fmt, s_drc.tm, s_drc.w, s_drc.h, 1, s_drc.pitch, s_drc.swz, 0, 0, true);
+\t\tint w = 0, h = 0;
+\t\tWindowSystem::GetWindowPhysSize(w, h);
+\t\tint rTV[4], rDRC[4];
+\t\tg_nl_screens.layout(w, h, LatteGPUState.isDRCPrimary, rTV, rDRC);
+\t\tconst bool drcBig = LatteGPUState.isDRCPrimary;
+\t\t// erst das grosse Bild (mit Hintergrund loeschen), dann das kleine, danach das Overlay
+\t\tLatteTextureView* first = drcBig && drcView ? drcView : texView;
+\t\tLatteTextureView* second = drcBig ? texView : drcView;
+\t\tg_nl_screens.rect = drcBig && drcView ? rDRC : rTV;
+\t\tg_nl_screens.clear = true;
+\t\tg_nl_screens.skip_overlay = second != nullptr && second != first;
+\t\tLatteRenderTarget_copyToBackbuffer(first, false);
+\t\tif (second && second != first)
+\t\t{
+\t\t\tg_nl_screens.rect = drcBig ? rTV : rDRC;
+\t\t\tg_nl_screens.clear = false;
+\t\t\tg_nl_screens.skip_overlay = false;
+\t\t\tLatteRenderTarget_copyToBackbuffer(second, false);
+\t\t}
+\t\tg_nl_screens.rect = nullptr;
+\t\tg_nl_screens.clear = false;
+\t\tg_nl_screens.skip_overlay = false;
+\t\treturn;
+\t}
+"""
+
+
 def patch(cemu_dir, log):
     """Kleine Aenderungen an Cemu (bleiben MPL-2.0)."""
     # 1. CMake: unseren AOT-Code einbinden
@@ -85,6 +126,25 @@ def patch(cemu_dir, log):
     _patch_file(lo, "void LatteOverlay_render(bool pad_view)\n{\n",
                 "void (*g_nl_overlay_hook)(bool pad_view) = nullptr; // Nintendo Land Recomp\n"
                 "void LatteOverlay_render(bool pad_view)\n{\n\tif (g_nl_overlay_hook) g_nl_overlay_hook(pad_view);\n", log)
+    # 5. TV- und GamePad-Bild in einem Fenster (nl_screens.h liegt im Frontend)
+    rt = os.path.join(cemu_dir, "src", "Cafe", "HW", "Latte", "Core", "LatteRenderTarget.cpp")
+    _patch_file(rt, '#include "Cafe/OS/libs/swkbd/swkbd.h"\n',
+                '#include "Cafe/OS/libs/swkbd/swkbd.h"\n#include "nl_screens.h" // Nintendo Land Recomp\nNLScreens g_nl_screens;\n', log)
+    _patch_file(rt, "\tbool clearBackground = false;\n\tif (imageWidth != fullscreenWidth || imageHeight != fullscreenHeight)\n\t\tclearBackground = true;\n",
+                "\tbool clearBackground = false;\n\tif (imageWidth != fullscreenWidth || imageHeight != fullscreenHeight)\n\t\tclearBackground = true;\n"
+                "\tif (g_nl_screens.rect) { imageX = g_nl_screens.rect[0]; imageY = g_nl_screens.rect[1]; imageWidth = g_nl_screens.rect[2]; "
+                "imageHeight = g_nl_screens.rect[3]; clearBackground = g_nl_screens.clear; } // Nintendo Land Recomp\n", log)
+    _patch_file(rt, "\tg_renderer->HandleScreenshotRequest(textureView, isPadView);\n\tif (!g_renderer->ImguiBegin(!isPadView))\n",
+                "\tg_renderer->HandleScreenshotRequest(textureView, isPadView);\n\tif (g_nl_screens.skip_overlay) return; // Nintendo Land Recomp\n"
+                "\tif (!g_renderer->ImguiBegin(!isPadView))\n", log)
+    _patch_file(rt, "\tif (!texView)\n\t{\n\t\treturn;\n\t}\n",
+                "\tif (!texView)\n\t{\n\t\treturn;\n\t}\n" + NL_COMBINED, log)
+    # 6. Keine Shader-Meldungen und kein Emulator-Name im Log
+    cfg = os.path.join(cemu_dir, "src", "config", "CemuConfig.h")
+    _patch_file(cfg, "\t\tbool shader_compiling = true;\n", "\t\tbool shader_compiling = false; // Nintendo Land Recomp\n", log)
+    csys = os.path.join(cemu_dir, "src", "Cafe", "CafeSystem.cpp")
+    _patch_file(csys, 'cemuLog_log(LogType::Force, "------- Init {} -------", BUILD_VERSION_WITH_NAME_STRING);',
+                'cemuLog_log(LogType::Force, "------- Init NL-Engine (Nintendo Land Recomp) -------");', log)
     fu = os.path.join(cemu_dir, "src", "util", "Fiber", "FiberUnix.cpp")
     if os.path.isfile(fu):
         _patch_file(fu, "const size_t stackSize = 2 * 1024 * 1024;",

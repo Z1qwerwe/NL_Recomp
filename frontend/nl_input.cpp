@@ -5,6 +5,8 @@
 // jede Aktion auf einen virtuellen Knopf unseres Controllers, und wir entscheiden selbst,
 // welche Tasten/Knoepfe ihn ausloesen: 2 Tasten + 1 Controller-Knopf pro Aktion.
 #include "nl_app.h"
+#include "nl_screens.h"
+#include "Cafe/HW/Latte/Core/Latte.h"
 
 #include "WindowSystem.h"
 #include "input/InputManager.h"
@@ -49,9 +51,10 @@ const int kNLActionCount = (int)(sizeof(kNLActions) / sizeof(kNLActions[0]));
 
 // SDL-Gamepad: Knopf-Nummern (wie Cemus SDLController) und Achsen-Codes aus Controller.h
 enum PadBtn { P_SOUTH = 0, P_EAST, P_WEST, P_NORTH, P_BACK, P_GUIDE, P_START, P_LSTICK, P_RSTICK, P_LB, P_RB,
-              P_UP, P_DOWN, P_LEFT, P_RIGHT, P_MISC };
+              P_UP, P_DOWN, P_LEFT, P_RIGHT, P_MISC, P_PADDLE1, P_PADDLE2, P_PADDLE3, P_PADDLE4, P_TOUCHPAD };
 
 static NLBinding s_bind[64];
+static int action_index(const std::string& name);
 static std::filesystem::path s_path;
 static std::shared_ptr<ControllerBase> s_gamepad;
 static std::mutex s_pad_mutex;
@@ -59,8 +62,36 @@ static NLPadSnapshot s_snap;
 static std::atomic<bool> s_menu_btn_edge{false};
 static bool s_menu_btn_last = false;
 
+// Maus (vom Fenster-Thread geschrieben)
+static std::atomic<int> s_mouse_dx{0}, s_mouse_dy{0};
+static std::atomic<bool> s_touch_down{false};
+static std::atomic<int> s_touch_x{0}, s_touch_y{0};
+
+void nl_mouse_add_delta(int dx, int dy) { s_mouse_dx += dx; s_mouse_dy += dy; }
+void nl_mouse_touch(bool down, int x, int y) { s_touch_x = x; s_touch_y = y; s_touch_down = down; }
+bool nl_mouse_pointer_mode() {
+    return !g_nl.mouse_camera || g_nl_menu_open || nl_key_down(VK_MENU) || !WindowSystem::GetWindowInfo().app_active;
+}
+
+NLPadType nl_pad_type() {
+    std::string n = nl_gamepad_name();
+    if (n.empty()) return NLPadType::None;
+    for (auto& ch : n) ch = (char)tolower((unsigned char)ch);
+    auto has = [&](const char* t) { return n.find(t) != std::string::npos; };
+    if (has("dualsense") || has("ps5") || has("ps4") || has("ps3") || has("dualshock") || has("playstation")) return NLPadType::PlayStation;
+    if (has("xbox") || has("xinput")) return NLPadType::Xbox;
+    if (has("nintendo") || has("switch") || has("pro controller") || has("joy-con") || has("wii u")) return NLPadType::Nintendo;
+    return NLPadType::Other;
+}
+
+bool nl_a_is_bottom() {
+    if (g_nl.button_layout == 1) return false;
+    if (g_nl.button_layout == 2) return true;
+    return nl_pad_type() != NLPadType::Nintendo;   // automatisch: Xbox/PlayStation = A unten
+}
+
 static NLBinding default_binding(int i) {
-    const bool xbox = g_nl.button_layout == 1;
+    const bool xbox = nl_a_is_bottom();
     static const std::map<std::string, std::tuple<uint32_t, uint32_t, int>> d = {
         // Aktion        Taste 1     Taste 2      Controller
         {"A", {VK_RETURN, 'E', -100}}, {"B", {VK_BACK, VK_LCONTROL, -101}},
@@ -94,6 +125,23 @@ static NLBinding default_binding(int i) {
 }
 
 NLBinding& nl_binding(int action) { return s_bind[action]; }
+
+// Gesichtstasten an das Knopf-Layout anpassen (A/B/X/Y), ohne eigene Aenderungen zu ueberschreiben:
+// nur Aktionen, die noch die Standardbelegung des ANDEREN Layouts haben, werden umgestellt.
+static void fix_face_buttons() {
+    const bool bottom = nl_a_is_bottom();
+    const int nin[] = {P_EAST, P_SOUTH, P_NORTH, P_WEST};
+    const int xb[] = {P_SOUTH, P_EAST, P_WEST, P_NORTH};
+    const char* names[] = {"A", "B", "X", "Y"};
+    bool changed = false;
+    for (int k = 0; k < 4; k++) {
+        int i = action_index(names[k]);
+        if (i < 0) continue;
+        int want = (bottom ? xb : nin)[k], other = (bottom ? nin : xb)[k];
+        if (s_bind[i].pad == other) { s_bind[i].pad = want; changed = true; }
+    }
+    if (changed) nl_input_save();
+}
 
 void nl_input_reset_defaults() {
     for (int i = 0; i < kNLActionCount; i++) s_bind[i] = default_binding(i);
@@ -157,25 +205,28 @@ std::string nl_key_name(uint32_t vk) {
 }
 
 std::string nl_pad_name(int code) {
-    const bool xbox = g_nl.button_layout == 1;
+    const NLPadType t = nl_pad_type();
+    const bool ps = t == NLPadType::PlayStation, xb = t == NLPadType::Xbox, nin = t == NLPadType::Nintendo;
     switch (code) {
     case -1: return "-";
-    case P_SOUTH: return xbox ? "A (unten)" : "Unten-Knopf";
-    case P_EAST: return xbox ? "B (rechts)" : "Rechts-Knopf";
-    case P_WEST: return xbox ? "X (links)" : "Links-Knopf";
-    case P_NORTH: return xbox ? "Y (oben)" : "Oben-Knopf";
-    case P_BACK: return "Back/View";
-    case P_GUIDE: return "Home/Guide";
-    case P_START: return "Start/Menu";
-    case P_LSTICK: return "L-Stick druecken";
-    case P_RSTICK: return "R-Stick druecken";
-    case P_LB: return "LB / L1";
-    case P_RB: return "RB / R1";
+    case P_SOUTH: return ps ? "Kreuz" : xb ? "A" : nin ? "B (unten)" : "Unten-Knopf";
+    case P_EAST: return ps ? "Kreis" : xb ? "B" : nin ? "A (rechts)" : "Rechts-Knopf";
+    case P_WEST: return ps ? "Viereck" : xb ? "X" : nin ? "Y (links)" : "Links-Knopf";
+    case P_NORTH: return ps ? "Dreieck" : xb ? "Y" : nin ? "X (oben)" : "Oben-Knopf";
+    case P_BACK: return ps ? "Create" : xb ? "View" : nin ? "Minus" : "Back";
+    case P_GUIDE: return ps ? "PS-Taste" : xb ? "Xbox-Taste" : "Home";
+    case P_START: return ps ? "Options" : xb ? "Menu" : nin ? "Plus" : "Start";
+    case P_LSTICK: return ps ? "L3" : "L-Stick druecken";
+    case P_RSTICK: return ps ? "R3" : "R-Stick druecken";
+    case P_LB: return ps ? "L1" : xb ? "LB" : "L";
+    case P_RB: return ps ? "R1" : xb ? "RB" : "R";
     case P_UP: return "Steuerkreuz hoch";
     case P_DOWN: return "Steuerkreuz runter";
     case P_LEFT: return "Steuerkreuz links";
     case P_RIGHT: return "Steuerkreuz rechts";
-    case P_MISC: return "Share/Capture";
+    case P_MISC: return ps ? "Mikrofon-Taste" : xb ? "Share" : "Capture";
+    case P_PADDLE1: case P_PADDLE2: case P_PADDLE3: case P_PADDLE4: return "Paddle " + std::to_string(code - P_PADDLE1 + 1);
+    case P_TOUCHPAD: return "Touchpad";
     case kAxisXP: return "L-Stick rechts";
     case kAxisXN: return "L-Stick links";
     case kAxisYP: return "L-Stick runter";
@@ -184,8 +235,8 @@ std::string nl_pad_name(int code) {
     case kRotationXN: return "R-Stick links";
     case kRotationYP: return "R-Stick runter";
     case kRotationYN: return "R-Stick hoch";
-    case kTriggerXP: return "LT / L2";
-    case kTriggerYP: return "RT / R2";
+    case kTriggerXP: return ps ? "L2" : xb ? "LT" : "ZL";
+    case kTriggerYP: return ps ? "R2" : xb ? "RT" : "ZR";
     }
     return "Knopf " + std::to_string(code);
 }
@@ -228,6 +279,37 @@ public:
     bool is_connected() override { return true; }
     std::string get_button_name(uint64 button) const override { return "NL " + std::to_string(button); }
 
+    // Touchscreen: Maus-Klick auf die GamePad-Flaeche im Fenster
+    bool has_position() override {
+        if (g_nl_menu_open || !s_touch_down || !nl_mouse_pointer_mode()) return false;
+        int r[4];
+        if (!drc_rect(r)) return false;
+        int x = s_touch_x, y = s_touch_y;
+        return x >= r[0] && y >= r[1] && x < r[0] + r[2] && y < r[1] + r[3];
+    }
+    glm::vec2 get_position() override {
+        int r[4];
+        if (!drc_rect(r)) return {};
+        return {std::clamp((s_touch_x - r[0]) / (float)r[2], 0.0f, 1.0f), std::clamp((s_touch_y - r[1]) / (float)r[3], 0.0f, 1.0f)};
+    }
+    glm::vec2 get_prev_position() override { return get_position(); }
+
+    // Wo ist das GamePad-Bild im Hauptfenster?
+    static bool drc_rect(int* r) {
+        if (WindowSystem::IsPadWindowOpen()) return false;   // eigenes GamePad-Fenster: Cemu-Weg
+        if (g_nl_screens.mode != 0) {
+            for (int k = 0; k < 4; k++) r[k] = g_nl_screens.drc_rect[k];
+            return r[2] > 0 && r[3] > 0;
+        }
+        if (!LatteGPUState.isDRCPrimary) return false;   // nur TV sichtbar
+        int w = 0, h = 0;
+        WindowSystem::GetWindowPhysSize(w, h);
+        int iw = w, ih = w * 9 / 16;
+        if (ih > h) { ih = h; iw = h * 16 / 9; }
+        r[0] = (w - iw) / 2; r[1] = (h - ih) / 2; r[2] = iw; r[3] = ih;
+        return iw > 0;
+    }
+
     ControllerState raw_state() override {
         ControllerState pad{};
         {
@@ -265,6 +347,13 @@ public:
             if (!kNLActions[i].stick) out.buttons.SetButtonState(kButton0 + i, v[i] > 0.5f);
         out.axis = {val("LS_RIGHT") - val("LS_LEFT"), val("LS_UP") - val("LS_DOWN")};
         out.rotation = {val("RS_RIGHT") - val("RS_LEFT"), val("RS_UP") - val("RS_DOWN")};
+        // Maus-Kamera: Bewegung seit der letzten Abfrage wirkt wie der rechte Stick
+        int dx = s_mouse_dx.exchange(0), dy = s_mouse_dy.exchange(0);
+        if (g_nl.mouse_camera && !nl_mouse_pointer_mode()) {
+            const float k = 0.06f * g_nl.mouse_sens / 100.0f;
+            out.rotation.x = std::clamp(out.rotation.x + dx * k, -1.0f, 1.0f);
+            out.rotation.y = std::clamp(out.rotation.y - dy * k, -1.0f, 1.0f);
+        }
         return out;
     }
 };
@@ -324,6 +413,7 @@ void nl_input_hotplug() {
         pad->set_axis_settings(ControllerBase::AxisSetting(dz));
         pad->set_rotation_settings(ControllerBase::AxisSetting(dz));
         if (as_gamepad) {
+            fix_face_buttons();
             cemuLog_log(LogType::Force, "Nintendo Land: Controller als GamePad: {}", pad->display_name());
         } else if (s_next_wiimote <= 4) {
             auto wiimote = im.set_controller(s_next_wiimote, EmulatedController::Type::Wiimote, pad);
@@ -352,7 +442,7 @@ int nl_pad_capture(const NLPadSnapshot& rest) {
     NLPadSnapshot s = nl_pad_snapshot();
     if (!s.connected) return -1;
     uint64_t pressed = s.buttons & ~rest.buttons;
-    for (int b = 0; b <= P_MISC; b++)
+    for (int b = 0; b <= P_TOUCHPAD; b++)
         if (b != P_GUIDE && ((pressed >> b) & 1)) return b;
     auto axis = [](float v, float r, int pos, int neg) { return v - r > 0.6f ? pos : (v - r < -0.6f ? neg : -1); };
     int c;

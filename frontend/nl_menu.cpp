@@ -62,8 +62,12 @@ void nl_settings_load(const std::filesystem::path& path) {
         else if (k == "pad_volume") n.pad_volume = std::clamp(v, 0, 100);
         else if (k == "mic") n.mic = v != 0;
         else if (k == "mic_volume") n.mic_volume = std::clamp(v, 0, 100);
-        else if (k == "button_layout") n.button_layout = std::clamp(v, 0, 1);
         else if (k == "deadzone") n.deadzone = std::clamp(v, 0, 60);
+        else if (k == "screen_layout") n.screen_layout = std::clamp(v, 0, 2);
+        else if (k == "pip_size") n.pip_size = std::clamp(v, 15, 60);
+        else if (k == "mouse_camera") n.mouse_camera = v != 0;
+        else if (k == "mouse_sens") n.mouse_sens = std::clamp(v, 10, 400);
+        else if (k == "button_layout2") n.button_layout = std::clamp(v, 0, 2);
     }
     s_startup = g_nl;
 }
@@ -78,7 +82,8 @@ void nl_settings_save() {
       << "\nwindow_w=" << n.window_w << "\nwindow_h=" << n.window_h << "\nlanguage=" << n.language
       << "\nasync_shaders=" << n.async_shaders << "\nstart_view=" << n.start_view << "\nvolume=" << n.volume
       << "\npad_volume=" << n.pad_volume << "\nmic=" << n.mic << "\nmic_volume=" << n.mic_volume
-      << "\nbutton_layout=" << n.button_layout << "\ndeadzone=" << n.deadzone << "\n";
+      << "\nbutton_layout2=" << n.button_layout << "\ndeadzone=" << n.deadzone << "\nscreen_layout=" << n.screen_layout
+      << "\npip_size=" << n.pip_size << "\nmouse_camera=" << n.mouse_camera << "\nmouse_sens=" << n.mouse_sens << "\n";
     GetConfigHandle().Save();
 }
 
@@ -208,7 +213,11 @@ static std::vector<Row> build_tab(int tab) {
                               &n.vsync, {"Aus", "An", "Schnell"}, d.vsync, true));
         rows.push_back(choice("Leistungsanzeige", "Zeigt oben links die Bilder pro Sekunde, ausfuehrlich auch CPU-, RAM- und Grafikspeicher-Last.",
                               &n.perf_overlay, {"Aus", "FPS", "Ausfuehrlich"}, d.perf_overlay));
-        rows.push_back(onoff("GamePad-Fenster", "Zeigt das GamePad-Bild in einem zweiten Fenster - praktisch mit zwei Bildschirmen.",
+        rows.push_back(choice("Bildschirme", "Wie TV- und GamePad-Bild gezeigt werden. Bild-in-Bild: das GamePad-Bild klein in der Ecke. "
+                              "Nebeneinander: beide gleichzeitig. Mit Tab tauschst du, welches gross ist. Ein Klick auf das GamePad-Bild ist ein Touch.",
+                              &n.screen_layout, {"Eins (Tab wechselt)", "Bild-in-Bild", "Nebeneinander"}, d.screen_layout));
+        rows.push_back(percent("Groesse kleines Bild", "Wie gross das kleine Bild bei Bild-in-Bild ist.", &n.pip_size, d.pip_size, 15, 60, 5));
+        rows.push_back(onoff("GamePad-Fenster", "Zeigt das GamePad-Bild stattdessen in einem zweiten Fenster - praktisch mit zwei Bildschirmen.",
                              &n.gamepad_window, d.gamepad_window, true));
         rows.push_back(header("Bildqualitaet"));
         {
@@ -226,7 +235,7 @@ static std::vector<Row> build_tab(int tab) {
         rows.push_back(choice("Bildformat", "16:9 mit schwarzen Balken behalten oder das Bild aufs ganze Fenster strecken.",
                               &n.aspect, {"16:9 behalten", "Strecken"}, d.aspect));
     } else if (tab == 1) {   // Spiel
-        rows.push_back(choice("Startbild", "Welches Bild beim Start im Hauptfenster gezeigt wird. Nintendo Land fragt am Anfang vieles auf dem GamePad.",
+        rows.push_back(choice("Grosses Bild beim Start", "Welches Bild beim Start gross ist. Nintendo Land fragt am Anfang vieles auf dem GamePad.",
                               &n.start_view, {"TV", "GamePad"}, d.start_view));
         {
             std::vector<std::string> names(std::begin(kLanguages), std::end(kLanguages));
@@ -240,14 +249,18 @@ static std::vector<Row> build_tab(int tab) {
         rows.push_back(onoff("Mikrofon", "Mikrofon des PCs als GamePad-Mikrofon. Im Spiel die Mikrofon-Taste halten.", &n.mic, d.mic, true));
         rows.push_back(percent("Mikrofon-Lautstaerke", "Wie laut das Spiel dein Mikrofon hoert.", &n.mic_volume, d.mic_volume, 0, 100, 5));
     } else {   // Steuerung
-        rows.push_back(choice("Knopf-Layout", "Nintendo: A ist der rechte Knopf (wie am GamePad). Xbox: A ist der untere Knopf. Gilt fuer die Standard-Belegung.",
-                              &n.button_layout, {"Nintendo (A rechts)", "Xbox (A unten)"}, d.button_layout));
+        rows.push_back(choice("Knopf-Layout", "Automatisch: Xbox- und PlayStation-Controller bekommen A auf den unteren Knopf (Kreuz), "
+                              "Nintendo-Controller auf den rechten. Setzt die Controller-Belegung auf Standard.",
+                              &n.button_layout, {"Automatisch", "Nintendo (A rechts)", "A unten (Xbox/PS)"}, d.button_layout));
         rows.back().change = [](int dir) {
-            g_nl.button_layout = std::clamp(g_nl.button_layout + dir, 0, 1);
+            g_nl.button_layout = std::clamp(g_nl.button_layout + dir, 0, 2);
             nl_input_reset_defaults();
             nl_input_save();
             save_later();
         };
+        rows.push_back(onoff("Maus-Kamera", "Die Maus dreht die Kamera wie der rechte Stick, der Zeiger ist versteckt. "
+                             "Alt gedrueckt halten zeigt den Zeiger - zum Antippen auf dem GamePad-Bild.", &n.mouse_camera, d.mouse_camera));
+        rows.push_back(percent("Maus-Empfindlichkeit", "Wie schnell sich die Kamera mit der Maus dreht.", &n.mouse_sens, d.mouse_sens, 10, 400, 10));
         rows.push_back(percent("Stick-Totzone", "Wie weit der Stick bewegt werden muss, bevor das Spiel reagiert.", &n.deadzone, d.deadzone, 0, 60, 5));
         rows.push_back(header("Belegung"));
         for (int i = 0; i < kNLActionCount; i++) {
@@ -417,7 +430,7 @@ static void render_menu(int w, int h) {
 
     // ---------------- Eingabe ----------------
     NLPadSnapshot ps = nl_pad_snapshot();
-    const bool xb = g_nl.button_layout == 1;
+    const bool xb = nl_a_is_bottom();
     auto pb = [&](int b) { return ps.connected && ((ps.buttons >> b) & 1); };
     const int PAD_OK = xb ? 0 : 1, PAD_BACK = xb ? 1 : 0;   // Nintendo: A rechts, B unten
     bool in[N_COUNT] = {};

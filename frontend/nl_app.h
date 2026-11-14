@@ -14,6 +14,8 @@ struct NLSettings {
     int vsync = 1;               // 0 aus, 1 an, 2 Mailbox (wenig Verzoegerung)
     int perf_overlay = 0;        // 0 aus, 1 FPS, 2 ausfuehrlich
     bool gamepad_window = false; // GamePad-Bild in eigenem Fenster (Neustart)
+    int screen_layout = 1;       // 0 eins von beiden (Tab), 1 Bild-in-Bild, 2 nebeneinander
+    int pip_size = 33;           // Groesse des kleinen Bildes in Prozent
     int res_scale = 0;           // Index in kResScales (Neustart)
     int upscale = 1;             // 0 bilinear, 1 bikubisch, 2 Hermite, 3 Pixel
     int downscale = 0;
@@ -30,7 +32,9 @@ struct NLSettings {
     bool mic = true;             // (Neustart)
     int mic_volume = 50;
     // Steuerung
-    int button_layout = 0;       // 0 Nintendo (A rechts), 1 Xbox (A unten)
+    int button_layout = 0;       // 0 automatisch, 1 Nintendo (A rechts), 2 A unten (Xbox/PlayStation)
+    bool mouse_camera = true;    // Maus dreht die Kamera (rechter Stick), Zeiger versteckt
+    int mouse_sens = 100;        // Prozent
     int deadzone = 20;           // Prozent
 };
 extern NLSettings g_nl;
@@ -63,6 +67,14 @@ void nl_input_reset_defaults();
 std::string nl_key_name(uint32_t vk);
 std::string nl_pad_name(int code);
 std::string nl_gamepad_name();         // leer = kein Controller
+enum class NLPadType { None, Nintendo, Xbox, PlayStation, Other };
+NLPadType nl_pad_type();
+bool nl_a_is_bottom();                  // Knopf-Layout: A = unterer Knopf?
+
+// Maus (Fenster-Thread schreibt, Spiel liest)
+void nl_mouse_add_delta(int dx, int dy);           // relative Bewegung (Maus-Kamera)
+void nl_mouse_touch(bool down, int x, int y);       // Klick/Bewegung in echten Fensterpixeln
+bool nl_mouse_pointer_mode();                       // Zeiger sichtbar (Alt gehalten, Menue offen, ...)
 
 // Rohzustand fuer das Menue (Navigation und Aufnahme)
 struct NLPadSnapshot { bool connected = false; uint64_t buttons = 0; float lx = 0, ly = 0, rx = 0, ry = 0, lt = 0, rt = 0; };
