@@ -93,8 +93,18 @@ def configure_and_build(cemu_dir, build_dir, aot_dir, generated_dir, cmake, run,
         args += ["-G", "Visual Studio 17 2022", "-A", "x64"]
     log("Konfiguriere Cemu (beim ersten Mal laedt vcpkg alle Abhaengigkeiten, 20-60 Minuten) ...")
     run(args, env=env)
-    log("Baue Cemu mit Nintendo-Land-AOT ...")
-    run([cmake, "--build", build_dir, "--config", "Release", "--parallel", jobs], env=env)
+    log("Baue NintendoLand.exe (eigenes Programm mit nativem Spielcode) ...")
+    run([cmake, "--build", build_dir, "--config", "Release", "--target", "NintendoLand",
+         "--parallel", jobs], env=env)
+
+
+def find_game_exe(cemu_dir):
+    """Unser eigenes Programm (eigenes Fenster, eigene Einstellungen)."""
+    for name in ("NintendoLand.exe", "NintendoLand"):
+        p = os.path.join(cemu_dir, "bin", name)
+        if os.path.isfile(p):
+            return p
+    return None
 
 
 def find_exe(cemu_dir):

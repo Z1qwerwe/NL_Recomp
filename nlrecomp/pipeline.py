@@ -22,7 +22,32 @@ DEFAULT_SETTINGS = {
     # Ordner mit dem CMake-Projekt der Runtime. Leer = mitgelieferte Runtime.
     "runtime_dir": "",
     "exe_name": "NintendoLand.exe",
+    # Spiel-Einstellungen (landen in nl_data/nl_settings.ini neben NintendoLand.exe)
+    "fullscreen": False,
+    "vsync": True,
+    "gamepad_window": False,
+    "volume": 60,
+    "mic": True,
+    "window_w": 1280,
+    "window_h": 720,
+    # Tastenbelegung: Aktion -> Windows-Tastencode (leer = Standard)
+    "keys": {},
 }
+
+# Aktionen fuer die Tastenbelegung (Name in nl_settings.ini, Anzeige, Standard-Tastencode)
+KEY_ACTIONS = [
+    ("A", "A-Knopf", 0x0D), ("B", "B-Knopf", 0x08), ("X", "X-Knopf", ord("X")), ("Y", "Y-Knopf", ord("Y")),
+    ("L", "L", ord("Q")), ("R", "R", ord("E")), ("ZL", "ZL", ord("1")), ("ZR", "ZR", ord("3")),
+    ("PLUS", "Plus (+)", ord("P")), ("MINUS", "Minus (-)", ord("M")), ("HOME", "Home", ord("H")),
+    ("UP", "Steuerkreuz hoch", 0x26), ("DOWN", "Steuerkreuz runter", 0x28),
+    ("LEFT", "Steuerkreuz links", 0x25), ("RIGHT", "Steuerkreuz rechts", 0x27),
+    ("LS_UP", "Linker Stick hoch", ord("W")), ("LS_DOWN", "Linker Stick runter", ord("S")),
+    ("LS_LEFT", "Linker Stick links", ord("A")), ("LS_RIGHT", "Linker Stick rechts", ord("D")),
+    ("RS_UP", "Rechter Stick hoch", ord("I")), ("RS_DOWN", "Rechter Stick runter", ord("K")),
+    ("RS_LEFT", "Rechter Stick links", ord("J")), ("RS_RIGHT", "Rechter Stick rechts", ord("L")),
+    ("LS_CLICK", "Linker Stick drücken", ord("C")), ("RS_CLICK", "Rechter Stick drücken", ord("V")),
+    ("MIC", "Mikrofon (halten)", ord("T")), ("SCREEN", "TV/GamePad-Bild wechseln", 0x09),
+]
 
 
 def load_settings():
@@ -195,18 +220,47 @@ def step_cemu_build(settings, game, log, stop):
     gen = os.path.join(_game_work_dir(settings, game), "generated")
     aot = os.path.join(APP_DIR, "cemu", "aot")
     jobs = str(max(1, min(4, (os.cpu_count() or 2) // 2)))
+    if os.name == "nt":   # laufendes Spiel beenden, sonst kann die .exe nicht ueberschrieben werden
+        subprocess.run(["taskkill", "/F", "/IM", "NintendoLand.exe"], capture_output=True)
     cemu.configure_and_build(src, build, aot, gen, cmake, run, log, jobs)
-    exe = cemu.find_exe(src)
+    exe = cemu.find_game_exe(src)
     if not exe:
-        raise RuntimeError("Cemu wurde gebaut, aber die .exe fehlt in cemu/src/bin.")
-    os.makedirs(os.path.join(os.path.dirname(exe), "portable"), exist_ok=True)   # Einstellungen lokal
-    log(f"Fertig: {exe}")
+        raise RuntimeError("Gebaut, aber NintendoLand.exe fehlt im bin-Ordner.")
+    log(f"Fertig: {exe}  -> jetzt einfach SPIELEN druecken")
 
 
 def find_cemu_exe(settings):
     from . import cemu
     src, _ = _cemu_dirs(settings)
     return cemu.find_exe(src)
+
+
+def find_game_exe(settings):
+    """NintendoLand.exe: unser eigenes Programm."""
+    from . import cemu
+    src, _ = _cemu_dirs(settings)
+    return cemu.find_game_exe(src)
+
+
+def write_game_settings(settings, exe):
+    """Schreibt nl_data/nl_settings.ini, die NintendoLand.exe beim Start liest."""
+    data = os.path.join(os.path.dirname(exe), "nl_data")
+    os.makedirs(data, exist_ok=True)
+    b = lambda v: "1" if v else "0"  # noqa: E731
+    lines = ["# Wird vom Launcher geschrieben",
+             f"fullscreen={b(settings.get('fullscreen'))}",
+             f"vsync={b(settings.get('vsync', True))}",
+             f"gamepad_window={b(settings.get('gamepad_window'))}",
+             f"volume={int(settings.get('volume', 60))}",
+             f"mic={b(settings.get('mic', True))}",
+             f"window_w={int(settings.get('window_w', 1280))}",
+             f"window_h={int(settings.get('window_h', 720))}"]
+    keys = settings.get("keys") or {}
+    for name, _label, default in KEY_ACTIONS:
+        lines.append(f"key_{name}=0x{int(keys.get(name, default)):02X}")
+    with open(os.path.join(data, "nl_settings.ini"), "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+    return data
 
 
 def _kill_running(settings, log):
@@ -219,6 +273,15 @@ def _kill_running(settings, log):
 
 
 def step_launch(settings, game, log):
+    game_exe = find_game_exe(settings)
+    if game_exe:
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/F", "/IM", "NintendoLand.exe"], capture_output=True)
+        data = write_game_settings(settings, game_exe)
+        log("Starte Nintendo Land ...  (F11 = Vollbild, Tab = TV/GamePad-Bild)")
+        subprocess.Popen([game_exe, game.rpx], cwd=os.path.dirname(game_exe))
+        log(f"Log vom Spiel: {os.path.join(data, 'log.txt')}")
+        return
     cemu_exe = find_cemu_exe(settings)
     if cemu_exe and settings.get("backend", "cemu") == "cemu":
         log(f"Starte Cemu mit nativem Nintendo-Land-Code: {cemu_exe}")

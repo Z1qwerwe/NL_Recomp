@@ -52,6 +52,7 @@ def run_gui():
     style.configure("Panel.TLabel", background=PANEL, foreground=FG)
     style.configure("Muted.TLabel", background=PANEL, foreground=MUTED, font=("Segoe UI", 9))
     style.configure("Title.TLabel", background=BG, foreground=FG, font=("Segoe UI Semibold", 20))
+    style.configure("Section.TLabel", background=BG, foreground=FG, font=("Segoe UI Semibold", 12))
     style.configure("Sub.TLabel", background=BG, foreground=MUTED, font=("Segoe UI", 10))
     style.configure("TButton", background=PANEL, foreground=FG, borderwidth=0,
                     padding=(14, 8), font=("Segoe UI", 10))
@@ -209,29 +210,32 @@ def run_gui():
         state["stop"] = True
         log("Wird abgebrochen...")
 
-    def open_settings():
+    def open_advanced():
         win = tk.Toplevel(root)
-        win.title("Einstellungen")
+        win.title("Erweitert (Entwickler)")
         win.configure(bg=BG)
-        win.geometry("640x300")
+        win.geometry("700x320")
         frm = ttk.Frame(win, padding=16)
         frm.pack(fill="both", expand=True)
         fields = [
-            ("work_dir", "Arbeitsordner", "Hier landen Analyse, Shader-Cache und Build"),
+            ("work_dir", "Arbeitsordner", "Analyse, Shader-Cache und generierter Code"),
+            ("cemu_dir", "Engine-Ordner", "leer = C:\\NLR"),
             ("recompiler_cmd", "Recompiler", "leer = eingebauter Recompiler"),
-            ("shader_translator", "Shader-Translator", ".exe der Runtime, die GX2 -> SPIR-V macht"),
             ("runtime_dir", "Runtime-Projekt", "leer = mitgelieferte Runtime"),
-            ("exe_name", "Exe-Name", "Name der fertigen .exe"),
-            ("backend", "Backend", "cemu = Cemu-Version, eigene = eigene Runtime"),
         ]
         vars_ = {}
         for i, (k, label, hint) in enumerate(fields):
             ttk.Label(frm, text=label).grid(row=i, column=0, sticky="w", pady=4)
             v = tk.StringVar(value=settings.get(k, ""))
             vars_[k] = v
-            ttk.Entry(frm, textvariable=v, width=48).grid(row=i, column=1, sticky="ew", padx=8, ipady=3)
+            ttk.Entry(frm, textvariable=v, width=44).grid(row=i, column=1, sticky="ew", padx=8, ipady=3)
             ttk.Label(frm, text=hint, style="Sub.TLabel").grid(row=i, column=2, sticky="w")
         frm.columnconfigure(1, weight=1)
+        row = ttk.Frame(frm)
+        row.grid(row=len(fields), column=0, columnspan=3, sticky="w", pady=(12, 0))
+        ttk.Button(row, text="Nur analysieren", command=lambda: (win.destroy(), do_analyze())).pack(side="left")
+        ttk.Button(row, text="Eigene Test-Runtime bauen", command=lambda: (win.destroy(), do_build())).pack(
+            side="left", padx=8)
 
         def save():
             for k, v in vars_.items():
@@ -240,14 +244,112 @@ def run_gui():
             win.destroy()
             refresh_buttons()
         ttk.Button(frm, text="Speichern", style="Accent.TButton", command=save).grid(
-            row=len(fields), column=1, sticky="e", pady=12)
+            row=len(fields) + 1, column=1, sticky="e", pady=12)
 
-    add_btn("analyze", "Analysieren", do_analyze)
-    add_btn("shaders", "Shader vorkompilieren", do_shaders)
-    add_btn("build", "Recompilen + Bauen", do_build)
-    add_btn("cemu", "Cemu-Version bauen", do_cemu)
+    def open_settings():
+        """Spiel-Einstellungen: Grafik, Ton, Mikro, Steuerung."""
+        win = tk.Toplevel(root)
+        win.title("Einstellungen")
+        win.configure(bg=BG)
+        win.geometry("560x720")
+        frm = ttk.Frame(win, padding=16)
+        frm.pack(fill="both", expand=True)
+
+        ttk.Label(frm, text="Grafik", style="Section.TLabel").grid(row=0, column=0, sticky="w")
+        v_full = tk.BooleanVar(value=bool(settings.get("fullscreen")))
+        v_vsync = tk.BooleanVar(value=bool(settings.get("vsync", True)))
+        v_pad = tk.BooleanVar(value=bool(settings.get("gamepad_window")))
+        v_mic = tk.BooleanVar(value=bool(settings.get("mic", True)))
+        v_res = tk.StringVar(value=f"{settings.get('window_w', 1280)}x{settings.get('window_h', 720)}")
+        v_vol = tk.IntVar(value=int(settings.get("volume", 60)))
+        ttk.Checkbutton(frm, text="Vollbild", variable=v_full).grid(row=1, column=0, sticky="w")
+        ttk.Checkbutton(frm, text="VSync (kein Bildreissen)", variable=v_vsync).grid(row=2, column=0, sticky="w")
+        ttk.Checkbutton(frm, text="GamePad-Bild in eigenem Fenster", variable=v_pad).grid(row=3, column=0, sticky="w")
+        ttk.Label(frm, text="Fenstergroesse").grid(row=4, column=0, sticky="w", pady=(6, 0))
+        ttk.Combobox(frm, textvariable=v_res, width=12,
+                     values=["1280x720", "1600x900", "1920x1080", "2560x1440"]).grid(row=4, column=1, sticky="w")
+        ttk.Label(frm, text="Ton", style="Section.TLabel").grid(row=5, column=0, sticky="w", pady=(12, 0))
+        ttk.Label(frm, text="Lautstaerke").grid(row=6, column=0, sticky="w")
+        ttk.Scale(frm, from_=0, to=100, variable=v_vol, orient="horizontal").grid(row=6, column=1, sticky="ew")
+        ttk.Checkbutton(frm, text="Mikrofon benutzen (GamePad-Mikro)", variable=v_mic).grid(
+            row=7, column=0, columnspan=2, sticky="w")
+
+        ttk.Label(frm, text="Tastatur (Controller wird automatisch erkannt)", style="Section.TLabel").grid(
+            row=8, column=0, columnspan=2, sticky="w", pady=(12, 4))
+        keys = dict(settings.get("keys") or {})
+        canvas = tk.Canvas(frm, bg=BG, highlightthickness=0, height=300)
+        canvas.grid(row=9, column=0, columnspan=2, sticky="nsew")
+        sb = ttk.Scrollbar(frm, orient="vertical", command=canvas.yview)
+        sb.grid(row=9, column=2, sticky="ns")
+        canvas.configure(yscrollcommand=sb.set)
+        inner = ttk.Frame(canvas)
+        canvas.create_window((0, 0), window=inner, anchor="nw")
+        inner.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+
+        def key_name(code):
+            names = {0x0D: "Enter", 0x08: "Backspace", 0x09: "Tab", 0x20: "Leertaste", 0x10: "Shift",
+                     0x11: "Strg", 0x12: "Alt", 0x1B: "Esc", 0x25: "Links", 0x26: "Hoch", 0x27: "Rechts",
+                     0x28: "Runter"}
+            if code in names:
+                return names[code]
+            if 0x30 <= code <= 0x5A:
+                return chr(code)
+            if 0x70 <= code <= 0x87:
+                return f"F{code - 0x6F}"
+            return f"Taste {code}"
+
+        def grab(name, btn):
+            btn.configure(text="... Taste druecken")
+
+            def on_key(e):
+                # Unter Windows ist e.keycode direkt der Windows-Tastencode
+                keys[name] = e.keycode
+                btn.configure(text=key_name(e.keycode))
+                win.unbind("<KeyPress>")
+                return "break"
+            win.bind("<KeyPress>", on_key)
+            win.focus_force()
+
+        for i, (name, label, default) in enumerate(pipeline.KEY_ACTIONS):
+            ttk.Label(inner, text=label).grid(row=i, column=0, sticky="w", padx=(0, 12), pady=1)
+            b = ttk.Button(inner, text=key_name(int(keys.get(name, default))), width=16)
+            b.configure(command=lambda n=name, bb=b: grab(n, bb))
+            b.grid(row=i, column=1, sticky="w", pady=1)
+        frm.columnconfigure(1, weight=1)
+        frm.rowconfigure(9, weight=1)
+
+        def reset_keys():
+            keys.clear()
+            win.destroy()
+            settings["keys"] = {}
+            pipeline.save_settings(settings)
+            open_settings()
+
+        def save():
+            settings["fullscreen"] = v_full.get()
+            settings["vsync"] = v_vsync.get()
+            settings["gamepad_window"] = v_pad.get()
+            settings["mic"] = v_mic.get()
+            settings["volume"] = int(v_vol.get())
+            try:
+                w, h = v_res.get().lower().split("x")
+                settings["window_w"], settings["window_h"] = int(w), int(h)
+            except ValueError:
+                pass
+            settings["keys"] = keys
+            pipeline.save_settings(settings)
+            log("Einstellungen gespeichert.", )
+            win.destroy()
+        bottom = ttk.Frame(frm)
+        bottom.grid(row=10, column=0, columnspan=3, sticky="ew", pady=(12, 0))
+        ttk.Button(bottom, text="Standard-Tasten", command=reset_keys).pack(side="left")
+        ttk.Button(bottom, text="Speichern", style="Accent.TButton", command=save).pack(side="right")
+
+    add_btn("cemu", "Spiel bauen", do_cemu, accent=False)
+    add_btn("shaders", "Shader vorbereiten", do_shaders)
     add_btn("stop", "Stopp", do_stop)
-    ttk.Button(bar, text="Einstellungen", command=open_settings).pack(side="right")
+    ttk.Button(bar, text="Erweitert", command=open_advanced).pack(side="right")
+    ttk.Button(bar, text="Einstellungen", command=open_settings).pack(side="right", padx=(8, 0))
     play = ttk.Button(bar, text="SPIELEN", style="Accent.TButton", command=do_play)
     play.pack(side="right", padx=8)
     buttons["play"] = play
@@ -255,10 +357,10 @@ def run_gui():
     def refresh_buttons():
         g = state["game"]
         ready = bool(g and g.rpx) and not state["busy"]
-        for k in ("analyze", "shaders", "build", "cemu"):
+        for k in ("shaders", "cemu"):
             buttons[k].state(["!disabled"] if ready else ["disabled"])
         buttons["stop"].state(["!disabled"] if state["busy"] else ["disabled"])
-        has_exe = bool(g and g.rpx and (pipeline.find_exe(settings, g) or pipeline.find_cemu_exe(settings)))
+        has_exe = bool(g and g.rpx and (pipeline.find_game_exe(settings) or pipeline.find_exe(settings, g)))
         buttons["play"].state(["!disabled"] if has_exe and not state["busy"] else ["disabled"])
 
     refresh_buttons()

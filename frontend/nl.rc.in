@@ -1,0 +1,29 @@
+// Nintendo Land Recomp - Windows-Ressourcen (eigenes Icon, Schrift fuer das Overlay)
+#include "resource/resource.h"
+#include "winres.h"
+
+LANGUAGE LANG_NEUTRAL, SUBLANG_NEUTRAL
+1 ICON "@NL_ICON@"
+IDR_FONTAWESOME RCDATA "@NL_FONT@"
+
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION 0,1,0,0
+ PRODUCTVERSION 0,1,0,0
+ FILEOS 0x40004L
+ FILETYPE 0x1L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040704b0"
+        BEGIN
+            VALUE "FileDescription", "Nintendo Land Recomp"
+            VALUE "ProductName", "Nintendo Land Recomp"
+            VALUE "FileVersion", "0.1"
+            VALUE "OriginalFilename", "NintendoLand.exe"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x407, 1200
+    END
+END

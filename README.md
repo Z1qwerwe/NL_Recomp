@@ -60,3 +60,16 @@ Inoffizieller Versuch, **Nintendo Land (Wii U)** per Static Recompilation nativ 
 - `NL_TRACE_HLE=1`: jeden Aufruf einer Systemfunktion loggen
 - `NL_TRACE_FS=1`: Dateizugriffe loggen
 - CMake `-DNL_TRACE_FUNCS=ON` + `NL_DUMP_ON=<Funktionsname>`: die letzten 64 Spielfunktionen ausgeben, wenn eine Systemfunktion aufgerufen wird
+
+
+## NintendoLand.exe (eigenes Programm)
+
+Wie bei Zelda64Recomp: eigene .exe mit eigenem Fenster, eigenem Icon und eigenen Einstellungen.
+Der Launcher baut sie ueber **Spiel bauen** und startet sie mit **SPIELEN** direkt ins Spiel.
+
+- Code: `frontend/main.cpp` (Win32-Fenster, Einstellungen, Eingabe), Build: `frontend/nl_frontend.cmake`
+- Unterbau: Cemus Kern-Bibliotheken (MPL-2.0) fuer Cafe-OS-Funktionen, Vulkan-Grafik, Audio und Controller.
+  Cemus Oberflaeche (wxWidgets) wird nicht benutzt.
+- Einstellungen: `nl_data/nl_settings.ini` neben der .exe (schreibt der Launcher unter *Einstellungen*)
+- Tasten im Spiel: **F11** / **Alt+Enter** Vollbild, **Tab** TV/GamePad-Bild wechseln, Maus = Touchscreen
+- Controller werden automatisch erkannt: der erste ist das GamePad, weitere werden Wiimotes.
