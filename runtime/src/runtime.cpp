@@ -2,6 +2,7 @@
 #include "ppc_runtime.h"
 #include "hle.h"
 #include "threads.h"
+#include "platform.h"
 
 #include <algorithm>
 #include <chrono>
@@ -17,6 +18,18 @@
 #endif
 
 uint8_t* g_base = nullptr;
+
+#if defined(NL_TRACE_FUNCS)
+thread_local uint32_t g_trace_ring[1024];
+thread_local uint32_t g_trace_pos = 0;
+void nl_dump_trace(const char* why) {
+    printf("--- Letzte Funktionen (%s) ---\n", why);
+    for (uint32_t i = 64; i > 0; i--) printf(" %08X", g_trace_ring[(g_trace_pos - i) & 1023]);
+    printf("\n");
+}
+#else
+void nl_dump_trace(const char*) {}
+#endif
 
 // --- Speicher ---------------------------------------------------------------
 static void map_address_space() {
@@ -68,6 +81,7 @@ void call_indirect(PPCContext& c, uint32_t addr) {
     if (addr >= 0xC0000000u && addr < 0xC1000000u) { hle_call(c, addr); return; }
     if (PPCFunc fn = find_func(addr)) { fn(c); return; }
     fprintf(stderr, "[CPU] Unbekanntes Sprungziel 0x%08X (LR=0x%08X)\n", addr, c.lr);
+    nl_dump_trace("Absturz");
     exit(2);
 }
 
@@ -166,12 +180,11 @@ int main(int argc, char** argv) {
 
     static PPCContext c;
     memset(&c, 0, sizeof(c));
-    const uint32_t stack_top = 0x4F000000u;
+    const uint32_t stack_top = 0x4F000000u;   // Hauptstack: 0x4E000000 - 0x4F000000
     c.r[1] = stack_top - 0x100;
     c.r[2] = g_sda2_base;
     c.r[13] = g_sda_base;
     hle_init(c);
-    threads_main_enter();
 
     // argc/argv wie unter Cafe OS
     uint32_t argv_ptr = hle_alloc(16, 4);
@@ -182,8 +195,14 @@ int main(int argc, char** argv) {
     c.r[3] = 1;
     c.r[4] = argv_ptr;
 
-    call_indirect(c, entry);
-    printf("Einstiegsfunktion ist zurueckgekehrt, r3=%d\n", (int32_t)c.r[3]);
-    hle_report();
-    return (int)c.r[3];
+    // Das Spiel laeuft in einem eigenen Thread, das Fenster im Hauptthread
+    bool window = getenv("NL_HEADLESS") == nullptr && platform_init();
+    if (!window) printf("Kein Fenster (laeuft ohne Bild)\n");
+    return platform_run([entry]() {
+        threads_main_enter();
+        call_indirect(c, entry);
+        printf("Einstiegsfunktion ist zurueckgekehrt, r3=%d\n", (int32_t)c.r[3]);
+        hle_report();
+        return (int)c.r[3];
+    });
 }

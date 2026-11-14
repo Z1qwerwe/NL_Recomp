@@ -127,6 +127,16 @@ static inline void ppc_stswi(PPCContext& c, uint32_t ea, int rs, int nb) {
     }
 }
 
+// Optionaler Funktions-Tracer (nur mit -DNL_TRACE_FUNCS): merkt sich die letzten Aufrufe
+#if defined(NL_TRACE_FUNCS)
+extern thread_local uint32_t g_trace_ring[1024];
+extern thread_local uint32_t g_trace_pos;
+#define NL_ENTER(a) (g_trace_ring[g_trace_pos++ & 1023] = (a))
+#else
+#define NL_ENTER(a) ((void)0)
+#endif
+void nl_dump_trace(const char* why);
+
 typedef void (*PPCFunc)(PPCContext&);
 struct FuncEntry { uint32_t addr; PPCFunc fn; };
 struct ImportEntry { uint32_t addr; const char* lib; const char* name; bool is_func; };

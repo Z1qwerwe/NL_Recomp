@@ -482,7 +482,7 @@ class FuncEmitter:
         return None
 
     def emit(self):
-        out = [f"void fn_{self.start:08x}(PPCContext& c) {{"]
+        out = [f"void fn_{self.start:08x}(PPCContext& c) {{", f"  NL_ENTER(0x{self.start:08x});"]
         for i in self.ins:
             if i.addr in self.labels:
                 out.append(f"L_{i.addr:08x}:")

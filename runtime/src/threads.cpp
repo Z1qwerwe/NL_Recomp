@@ -336,6 +336,15 @@ static void h_OSTicksToCalendarTime(PPCContext& c) {
     for (int k = 0; k < 10; k++) st32(o + k * 4, (uint32_t)vals[k]);
 }
 
+uint32_t threads_specific(int i) { return cur()->specific[i & 15]; }
+
+void guest_sleep_ns(int64_t ns) {
+    gil().unlock();
+    if (ns > 0) std::this_thread::sleep_for(std::chrono::nanoseconds(ns));
+    else std::this_thread::yield();
+    gil().lock();
+}
+
 void threads_register(void (*reg)(const char*, const char*, void (*)(PPCContext&))) {
     const char* ci = "coreinit";
     reg(ci, "OSCreateThread", h_OSCreateThread);

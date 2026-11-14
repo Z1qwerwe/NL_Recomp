@@ -16,9 +16,37 @@ add_executable(NintendoLand
   src/hle.cpp
   src/threads.cpp
   src/fs.cpp
+  src/heap.cpp
+  src/gx2.cpp
+  src/input.cpp
   ${GENERATED_SOURCES}
 )
 target_include_directories(NintendoLand PRIVATE src ${GENERATED_DIR})
+
+# Fenster, Controller und Mikrofon ueber SDL3 (wird beim ersten Bauen von GitHub geladen)
+option(NL_TRACE_FUNCS "Funktions-Tracer zum Debuggen" OFF)
+if(NL_TRACE_FUNCS)
+  target_compile_definitions(NintendoLand PRIVATE NL_TRACE_FUNCS)
+endif()
+option(NL_USE_SDL "SDL3 fuer Fenster/Eingabe/Mikrofon verwenden" ON)
+if(NL_USE_SDL)
+  include(FetchContent)
+  set(SDL_SHARED OFF CACHE BOOL "" FORCE)
+  set(SDL_STATIC ON CACHE BOOL "" FORCE)
+  set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)
+  FetchContent_Declare(SDL3
+    URL https://github.com/libsdl-org/SDL/archive/refs/tags/release-3.2.0.tar.gz
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+  FetchContent_MakeAvailable(SDL3)
+  target_sources(NintendoLand PRIVATE src/platform_sdl.cpp)
+  if(TARGET SDL3::SDL3-static)
+    target_link_libraries(NintendoLand PRIVATE SDL3::SDL3-static)
+  else()
+    target_link_libraries(NintendoLand PRIVATE SDL3::SDL3)
+  endif()
+else()
+  target_sources(NintendoLand PRIVATE src/platform_null.cpp)
+endif()
 target_link_libraries(NintendoLand PRIVATE Threads::Threads)
 
 if(NOT NL_JOBS)

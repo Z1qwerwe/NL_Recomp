@@ -3,6 +3,9 @@
 #include "hle.h"
 #include "threads.h"
 #include "fs.h"
+#include "heap.h"
+#include "gx2.h"
+#include "input.h"
 
 #include <chrono>
 #include <cstdio>
@@ -26,7 +29,7 @@ static bool g_trace = getenv("NL_TRACE_HLE") != nullptr;
 static const uint32_t FAKE_BASE = 0xFF000000u;
 
 // --- Gast-Speicher ----------------------------------------------------------
-static uint32_t g_heap_ptr = 0x20000000u;
+static uint32_t g_heap_ptr = 0x48000000u;   // interner Runtime-Speicher
 static const uint32_t g_heap_end = 0x4E000000u;
 
 uint32_t hle_alloc(uint32_t size, uint32_t align) {
@@ -169,13 +172,22 @@ static void register_all() {
     reg(ci, "OSDynLoad_FindExport", h_OSDynLoad_FindExport);
     threads_register(reg);
     fs_register(reg);
+    heap_register(reg);
+    gx2_register(reg);
+    input_register(reg);
 }
 
 static int slot_for(const std::string& key) {
     for (size_t i = 0; i < g_slots.size(); i++)
         if (g_slots[i].first == key) return (int)i;
     auto it = g_impl.find(key);
-    g_slots.push_back({key, it != g_impl.end() ? it->second : nullptr});
+    HleFn fn = it != g_impl.end() ? it->second : nullptr;
+    if (!fn && key.rfind("dyn::", 0) == 0) {
+        std::string suffix = "::" + key.substr(5);
+        for (auto& [k, f] : g_impl)
+            if (k.size() > suffix.size() && k.compare(k.size() - suffix.size(), suffix.size(), suffix) == 0) { fn = f; break; }
+    }
+    g_slots.push_back({key, fn});
     return (int)g_slots.size() - 1;
 }
 
@@ -202,6 +214,14 @@ static void dispatch(PPCContext& c, int slot) {
     auto& [name, fn] = g_slots[slot];
     g_calls[name]++;
     if (g_trace) printf("[HLE] %s(0x%X, 0x%X, 0x%X) LR=0x%08X\n", name.c_str(), c.r[3], c.r[4], c.r[5], c.lr);
+    static const char* dump_on = getenv("NL_DUMP_ON");
+    if (dump_on && name.find(dump_on) != std::string::npos) {
+        nl_dump_trace(name.c_str());
+        uint32_t th = threads_specific(0), heap = th ? ld32(th + 0x6C) : 0;
+        printf("  sead-Thread 0x%08X, aktueller Heap 0x%08X:", th, heap);
+        for (uint32_t o = 0; heap && o < 0x40; o += 4) printf(" %08X", ld32(heap + o));
+        printf("\n");
+    }
     if (fn) { fn(c); return; }
     if (g_missing.insert(name).second)
         printf("[HLE] fehlt: %s  (r3=0x%X r4=0x%X, LR=0x%08X)\n", name.c_str(), c.r[3], c.r[4], c.lr);
