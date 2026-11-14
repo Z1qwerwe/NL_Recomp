@@ -223,7 +223,7 @@ def step_launch(settings, game, log):
     if cemu_exe and settings.get("backend", "cemu") == "cemu":
         log(f"Starte Cemu mit nativem Nintendo-Land-Code: {cemu_exe}")
         log("Beim ersten Start fragt Cemu nach ein paar Einstellungen (Sprache, Spielordner) - einfach durchklicken.")
-        subprocess.Popen([cemu_exe, "-g", game.base.path], cwd=os.path.dirname(cemu_exe))
+        subprocess.Popen([cemu_exe, "-g", game.rpx], cwd=os.path.dirname(cemu_exe))
         return
     exe = find_exe(settings, game)
     if not exe:

@@ -16,7 +16,8 @@ include(${NL_AOT_GENERATED}/sources.cmake)
 add_library(NLAotGenerated STATIC ${GENERATED_SOURCES})
 target_include_directories(NLAotGenerated BEFORE PRIVATE ${NL_AOT_DIR} ${NL_AOT_GENERATED})
 set_target_properties(NLAotGenerated PROPERTIES CXX_STANDARD 20
-  MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")   # wie Cemu (statische CRT)
+  MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>"   # wie Cemu (statische CRT)
+  INTERPROCEDURAL_OPTIMIZATION OFF)   # keine Link-Time-Optimierung: sonst dauert das Linken ewig
 set(NL_AOT_OPT "/O1" CACHE STRING "MSVC-Optimierung fuer den generierten Code")
 if(MSVC)
   target_compile_options(NLAotGenerated PRIVATE /bigobj ${NL_AOT_OPT} /wd4102 /wd4100 /wd4319 /wd4146)
