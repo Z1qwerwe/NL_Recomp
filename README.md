@@ -1,7 +1,7 @@
 <img width="200" height="200" alt="image-Photoroom" src="https://github.com/user-attachments/assets/c9ce659a-46c3-4407-a4c6-0c1182531a55" />
 
 
-# Nintendo Land Recomp
+# NL Recomp
 
 An unofficial project that runs **Nintendo Land (Wii U)** natively on PC — its own `NintendoLand.exe` with its own window, in-game settings menu, controller support and **online play with friends over Steam**.
 
