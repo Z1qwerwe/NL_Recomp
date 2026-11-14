@@ -1,0 +1,21 @@
+# Nie Spieldateien oder daraus erzeugten Code einchecken!
+work/
+generated/
+build/
+settings.json
+__pycache__/
+*.pyc
+*.rpx
+*.rpl
+*.bin
+*.wud
+*.wux
+*.app
+*.h3
+*.tik
+*.tmd
+*.szs
+*.sarc
+*.pack
+*.log
+save/
