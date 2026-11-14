@@ -253,6 +253,22 @@ def patch(cemu_dir, log):
                 "\t\tif (g_nl_det) { ppcCyclesSince2000 = ppcCyclesSince2000_UTC = g_nl_det_epoch * (uint64)ESPRESSO_CORE_CLOCK; "
                 "ppcCyclesSince2000TimerClock = ppcCyclesSince2000 / 20ULL; } }\n"
                 "\tPPCTimer_start();\n", log)
+    # 9. Deterministischer Modus: GPU-Auftraege synchron (Fertig-Meldung der GPU an fester Stelle)
+    tcl = os.path.join(src, "Cafe", "OS", "libs", "TCL", "TCL.cpp")
+    _patch_file(tcl, '#include "Common/CafeStaticVar.h"\n', '#include "Common/CafeStaticVar.h"\n' + EXT, log)
+    _patch_file(tcl, "\tuint64 s_currentRetireMarker = 0;\n",
+                "\tuint64 s_currentRetireMarker = 0;\n"
+                "\tstatic std::atomic<uint64> s_nl_notified{0}; // Nintendo Land Recomp: zuletzt gemeldeter Retire-Marker\n", log)
+    _patch_file(tcl, "\t\tcoreinit::OSSignalEventAllInternal(s_updateRetirementEvent.GetPtr());\n\t\t__OSUnlockScheduler();\n",
+                "\t\tcoreinit::OSSignalEventAllInternal(s_updateRetirementEvent.GetPtr());\n\t\t__OSUnlockScheduler();\n"
+                "\t\ts_nl_notified.store((uint64)s_tclStatePPC->gpuRetireMarker); // Nintendo Land Recomp\n", log)
+    _patch_file(tcl, "\t\t\t*timestampValueOut = s_currentRetireMarker; // incremented before each submit\n",
+                "\t\t\t*timestampValueOut = s_currentRetireMarker; // incremented before each submit\n"
+                "\t\t\tif (g_nl_det) // Nintendo Land Recomp: warten, bis die GPU fertig ist und es gemeldet hat\n\t\t\t{\n"
+                "\t\t\t\tauto t0 = std::chrono::steady_clock::now();\n"
+                "\t\t\t\twhile (s_nl_notified.load() < s_currentRetireMarker)\n\t\t\t\t{\n"
+                "\t\t\t\t\tif (std::chrono::steady_clock::now() - t0 > std::chrono::seconds(2)) { cemuLog_log(LogType::Force, \"NL-DET: GPU-Wartezeit ueberschritten\"); break; }\n"
+                "\t\t\t\t\tstd::this_thread::yield();\n\t\t\t\t}\n\t\t\t}\n", log)
     fu = os.path.join(cemu_dir, "src", "util", "Fiber", "FiberUnix.cpp")
     if os.path.isfile(fu):
         _patch_file(fu, "const size_t stackSize = 2 * 1024 * 1024;",

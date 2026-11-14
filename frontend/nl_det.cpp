@@ -34,7 +34,8 @@ static uint64 s_next_vsync = 0;
 static uint64 s_vsync_count = 0;
 static bool s_hash = false;
 static int s_hash_every = 300;
-static uint64 s_quit_after = 0;   // Test: nach so vielen VSyncs beenden
+static uint64 s_quit_after = 0;
+static bool s_trace = false;      // jede halbe Sekunde die virtuelle Uhr loggen   // Test: nach so vielen VSyncs beenden
 
 // Echtzeit-Bremse
 static std::chrono::steady_clock::time_point s_real0;
@@ -68,6 +69,8 @@ static void det_tick() {
         s_next_vsync += kVsync;
         s_vsync_count++;
         NL_Det_SignalVsync();
+        if (s_trace && s_vsync_count % 30 == 0)
+            cemuLog_log(LogType::Force, "NL-DET-T vsync={} vclock={}", s_vsync_count, g_nl_vclock.load());
         if (s_hash && s_vsync_count % s_hash_every == 0) {
             auto t0 = std::chrono::steady_clock::now();
             uint64 h = hash_guest_memory();
@@ -112,12 +115,14 @@ bool nl_det_init() {
     const char* e = getenv("NL_DET");
     if (!e || *e != '1') return false;
     g_nl_det = true;
+    g_nl.pad_gyro = false;   // Controller-Gyro rauscht -> im Test aus (beim Netplay werden Bewegungsdaten mit uebertragen)
     g_nl_vclock = kClock;   // 1 s, damit keine Zeitdifferenz negativ wird
     if (const char* ep = getenv("NL_DET_EPOCH")) g_nl_det_epoch = strtoull(ep, nullptr, 10);
     const char* hsh = getenv("NL_DET_HASH");
     s_hash = hsh && *hsh == '1';
     if (const char* ev = getenv("NL_DET_HASH_EVERY")) s_hash_every = std::max(1, atoi(ev));
     if (const char* q = getenv("NL_DET_QUIT_AFTER")) s_quit_after = strtoull(q, nullptr, 10);
+    if (const char* t = getenv("NL_DET_TRACE")) s_trace = *t == '1';
     g_nl_det_tick = det_tick;
     g_nl_det_idle = det_idle;
     cemuLog_log(LogType::Force, "NL-DET: deterministischer Modus an (Fingerabdruck {})", s_hash ? "an" : "aus");
