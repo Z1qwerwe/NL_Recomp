@@ -12,7 +12,6 @@
 #include "input/InputManager.h"
 #include "input/api/Controller.h"
 #include "input/emulated/VPADController.h"
-#include "input/emulated/WiimoteController.h"
 
 #include <Windows.h>
 #include <fstream>
@@ -446,7 +445,6 @@ void nl_input_init(const std::filesystem::path& controls_path) {
 
 // Controller ueber SDL (Xbox, PlayStation, Switch Pro, ...). Erster = GamePad, weitere = Wiimotes.
 static std::set<std::string> s_assigned;
-static size_t s_next_wiimote = 1;
 void nl_input_hotplug() {
     auto& im = InputManager::instance();
     auto provider = im.get_api_provider(InputAPI::SDLController);
@@ -470,15 +468,22 @@ void nl_input_hotplug() {
             pad->connect();   // SDL-Gamepad oeffnen (macht Cemu sonst beim Einhaengen ins GamePad)
             fix_face_buttons();
             cemuLog_log(LogType::Force, "Nintendo Land: Controller als GamePad: {}", pad->display_name());
-        } else if (s_next_wiimote <= 4) {
+        } else if (nl_wii_free_slots() > 0) {
             pad->connect();   // wie beim GamePad: SDL-Pad wirklich oeffnen
-            auto wiimote = im.set_controller(s_next_wiimote, EmulatedController::Type::Wiimote, pad);
-            wiimote->set_default_mapping(pad);
-            // Nintendo Land erwartet Wiimote + Nunchuk (+ MotionPlus fuer Zelda/Takamaru)
-            if (auto wm = std::dynamic_pointer_cast<WiimoteController>(wiimote))
-                wm->set_device_type(kWAPDevMPLSFreeStyle);
-            cemuLog_log(LogType::Force, "Nintendo Land: Controller als Wiimote {}: {}", s_next_wiimote, pad->display_name());
-            s_next_wiimote++;
+            std::weak_ptr<ControllerBase> weak = pad;
+            nl_wii_attach(pad->display_name(), false, [weak]() {
+                NLWiiIn in;
+                auto p = weak.lock();
+                if (!p || !p->is_connected()) { in.connected = false; return in; }
+                ControllerState st = p->update_state();
+                for (uint32 b : st.buttons.GetButtonList())
+                    if (b < 32) in.buttons |= 1u << b;
+                in.lx = st.axis.x; in.ly = st.axis.y;
+                in.rx = st.rotation.x; in.ry = st.rotation.y;
+                in.lt = st.trigger.x; in.rt = st.trigger.y;
+                in.sideways = g_nl.wiimote_sideways;
+                return in;
+            });
         }
     }
     // Totzone live aktualisieren, Verbindung pruefen (z. B. Kabel kurz raus)

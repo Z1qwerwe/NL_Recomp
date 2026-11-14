@@ -648,6 +648,7 @@ int main(int argc, char* argv[]) {
     // Beim Start fragt Nintendo Land auf dem GamePad nach Dingen -> erst das GamePad-Bild zeigen
     if (!s_pad_window) LatteGPUState.isDRCPrimary = g_nl.start_view == 1;
     CafeSystem::LaunchForegroundTitle();
+    nl_online_init();   // Steam, Online-Reiter, Streaming-Haken
 
     // Hauptschleife: Windows-Nachrichten (Fenster, Tastatur, Maus)
     MSG msg;
@@ -657,6 +658,7 @@ int main(int argc, char* argv[]) {
     }
 
     cemuLog_log(LogType::Force, "Nintendo Land: wird beendet");
+    nl_online_shutdown();
     if (CafeSystem::IsTitleRunning()) CafeSystem::ShutdownTitle();
     _exit(0);
 }

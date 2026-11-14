@@ -19,3 +19,8 @@ __pycache__/
 *.pack
 *.log
 save/
+
+# Steamworks SDK (Lizenz von Valve, nicht ins Repo)
+steamworks_sdk/
+steam_api64.dll
+steam_appid.txt

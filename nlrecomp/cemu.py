@@ -337,6 +337,24 @@ def _patch_all(cemu_dir, log):
                 "{\n\tif (g_nl_det) { // Nintendo Land Recomp: synchron kompilieren\n\tif (ppcRecompilerInstanceData->ppcRecompilerDirectJumpTable[enterAddress / 4] != PPCRecompiler_leaveRecompilerCode_unvisited)\n\t\treturn;\n", log)
     _patch_file(rc, "\ts_singleRecompilationMutex.unlock();\n\treturn;\n#endif\n",
                 "\ts_singleRecompilationMutex.unlock();\n\treturn;\n\t} // Nintendo Land Recomp\n", log)
+    # 12. Online-Streaming: TV-Bild und TV-Ton abgreifen
+    rh = os.path.join(src, "Cafe", "HW", "Latte", "Renderer", "Renderer.h")
+    _patch_file(rh, "\tvirtual void HandleScreenshotRequest(LatteTextureView* texView, bool padView){}\n",
+                "\tvirtual void HandleScreenshotRequest(LatteTextureView* texView, bool padView){}\n"
+                "\tvirtual void NL_StreamCapture(LatteTextureView* texView) {} // Nintendo Land Recomp\n", log)
+    vh = os.path.join(src, "Cafe", "HW", "Latte", "Renderer", "Vulkan", "VulkanRenderer.h")
+    _patch_file(vh, "\tvoid HandleScreenshotRequest(LatteTextureView* texView, bool padView) override;\n",
+                "\tvoid HandleScreenshotRequest(LatteTextureView* texView, bool padView) override;\n"
+                "\tvoid NL_StreamCapture(LatteTextureView* texView) override; // Nintendo Land Recomp\n", log)
+    _patch_file(rt, "\tif (!texView)\n\t{\n\t\treturn;\n\t}\n" + NL_COMBINED,
+                "\tif (!texView)\n\t{\n\t\treturn;\n\t}\n"
+                "\tif (renderTarget & RENDER_TARGET_TV) g_renderer->NL_StreamCapture(texView); // Nintendo Land Recomp: Online\n" + NL_COMBINED, log)
+    _patch_file(ax, '#include "Cafe/OS/libs/snd_core/ax.h"\n',
+                '#include "Cafe/OS/libs/snd_core/ax.h"\n'
+                'extern void (*g_nl_stream_audio)(const sint16* samples, int frames, int channels); // Nintendo Land Recomp\n', log)
+    _patch_file(ax, "\t\t\tif(g_tvAudio)\n\t\t\t\tg_tvAudio->FeedBlock(tempTVChannelData);\n",
+                "\t\t\tif(g_tvAudio)\n\t\t\t\tg_tvAudio->FeedBlock(tempTVChannelData);\n"
+                "\t\t\tif (g_nl_stream_audio) g_nl_stream_audio(tempTVChannelData, AX_SAMPLES_PER_3MS_48KHZ * AX_FRAMES_PER_GROUP, (int)channels); // Nintendo Land Recomp\n", log)
     fu = os.path.join(cemu_dir, "src", "util", "Fiber", "FiberUnix.cpp")
     if os.path.isfile(fu):
         _patch_file(fu, "const size_t stackSize = 2 * 1024 * 1024;",

@@ -224,11 +224,39 @@ def step_cemu_build(settings, game, log, stop):
     jobs = str(max(1, min(4, (os.cpu_count() or 2) // 2)))
     if os.name == "nt":   # laufendes Spiel beenden, sonst kann die .exe nicht ueberschrieben werden
         subprocess.run(["taskkill", "/F", "/IM", "NintendoLand.exe"], capture_output=True)
+        subprocess.run(["taskkill", "/F", "/IM", "NLOnline.exe"], capture_output=True)
     cemu.configure_and_build(src, build, aot, gen, cmake, run, log, jobs)
     exe = cemu.find_game_exe(src)
     if not exe:
         raise RuntimeError("Gebaut, aber NintendoLand.exe fehlt im bin-Ordner.")
+    _pack_online_client(os.path.dirname(exe), log)
     log(f"Fertig: {exe}  -> jetzt einfach SPIELEN druecken")
+
+
+def _pack_online_client(bin_dir, log):
+    """NLOnline.exe fuer Freunde zippen. Enthaelt keinen Spielcode - nur Bild-Empfang und Controller."""
+    import zipfile
+    client = os.path.join(bin_dir, "NLOnline.exe")
+    if not os.path.isfile(client):
+        return
+    files = ["NLOnline.exe", "steam_api64.dll", "steam_appid.txt"]
+    if not os.path.isfile(os.path.join(bin_dir, "steam_api64.dll")):
+        log("Hinweis: Online ist aus (Steamworks SDK fehlt) - NLOnline wird ohne Steam gebaut.")
+        return
+    out = os.path.join(bin_dir, "NLOnline_fuer_Freunde.zip")
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
+        for f in files:
+            path = os.path.join(bin_dir, f)
+            if os.path.isfile(path):
+                z.write(path, os.path.join("NLOnline", f))
+        z.writestr("NLOnline/LIESMICH.txt",
+                   "Nintendo Land - Online mitspielen\r\n\r\n"
+                   "1. Steam starten und anmelden.\r\n"
+                   "2. NLOnline.exe starten.\r\n"
+                   "3. Den Code vom Host eintippen oder in der Freundesliste auf 'Beitreten' klicken.\r\n\r\n"
+                   "Controller: Xbox, PlayStation, Switch Pro ... einfach einstecken. Ohne Controller: WASD, Leertaste, K, L, I.\r\n"
+                   "Esc: Pause-Menue   F11: Vollbild\r\n")
+    log(f"Fuer Freunde: {out}")
 
 
 def find_cemu_exe(settings):

@@ -3,6 +3,7 @@
 // Das Menue wird mit ImGui direkt ins Spielbild gezeichnet (ueber den Overlay-Haken im
 // Unterbau, siehe nl_menu_install). Bedienbar mit Maus, Tastatur und Controller.
 #include "nl_app.h"
+#include "net/nl_steam.h"
 
 #include "WindowSystem.h"
 #include "Cafe/HW/Latte/Core/Latte.h"
@@ -70,6 +71,8 @@ void nl_settings_load(const std::filesystem::path& path) {
         else if (k == "mouse_invert_y") n.mouse_invert_y = v != 0;
         else if (k == "free_camera") n.free_camera = v != 0;
         else if (k == "pad_gyro") n.pad_gyro = v != 0;
+        else if (k == "wiimote_sideways") n.wiimote_sideways = v != 0;
+        else if (k == "stream_quality") n.stream_quality = std::clamp(v, 0, 2);
         else if (k == "stick_camera_speed") n.stick_camera_speed = std::clamp(v, 10, 400);
         else if (k == "button_layout2") n.button_layout = std::clamp(v, 0, 2);
     }
@@ -88,7 +91,8 @@ void nl_settings_save() {
       << "\npad_volume=" << n.pad_volume << "\nmic=" << n.mic << "\nmic_volume=" << n.mic_volume
       << "\nbutton_layout2=" << n.button_layout << "\ndeadzone=" << n.deadzone << "\nscreen_layout=" << n.screen_layout
       << "\npip_size=" << n.pip_size << "\nmouse_camera=" << n.mouse_camera << "\nmouse_sens2=" << n.mouse_sens << "\nmouse_invert_y=" << n.mouse_invert_y << "\nfree_camera=" << n.free_camera
-      << "\nstick_camera_speed=" << n.stick_camera_speed << "\npad_gyro=" << n.pad_gyro << "\n";
+      << "\nstick_camera_speed=" << n.stick_camera_speed << "\npad_gyro=" << n.pad_gyro
+      << "\nwiimote_sideways=" << n.wiimote_sideways << "\nstream_quality=" << n.stream_quality << "\n";
     GetConfigHandle().Save();
 }
 
@@ -140,15 +144,32 @@ void nl_write_resolution_pack(const std::filesystem::path& data_dir) {
 // Menue-Aufbau
 // ===========================================================================
 struct Row {
-    const char* label = "";
-    const char* help = "";
+    std::string label;
+    std::string help;
     std::function<std::string()> value;      // angezeigter Wert
     std::function<void(int)> change;         // -1 / +1
     std::function<bool()> is_default;
     bool restart = false;                     // wirkt erst nach Neustart
     bool header = false;                      // Zwischenueberschrift
     int action = -1;                          // Steuerungs-Zeile (Index in kNLActions)
+    std::function<void()> press;              // Knopf-Zeile (Enter / A / Klick)
+    bool text_entry = false;                  // Code-Eingabe (Tastatur)
+    int dot = 0;                              // 1 = gruener Punkt (spielt gerade Nintendo Land), 2 = blau (hostet)
 };
+
+static Row info(std::string label, std::string value, std::string help) {
+    Row r;
+    r.label = std::move(label);
+    r.help = std::move(help);
+    r.value = [value] { return value; };
+    return r;
+}
+
+static Row button(std::string label, std::string value, std::string help, std::function<void()> press) {
+    Row r = info(std::move(label), std::move(value), std::move(help));
+    r.press = std::move(press);
+    return r;
+}
 
 static void save_later() { nl_request(NLRequest::SaveSettings); }
 
@@ -207,6 +228,143 @@ static Row header(const char* label) {
     return r;
 }
 
+// ---------------------------------------------------------------------------
+// Online-Reiter
+// ---------------------------------------------------------------------------
+static std::string s_join_code;                 // getippter Code
+static std::vector<NLFriend> s_friends;         // Freundesliste (jede Sekunde neu)
+static uint64_t s_friends_time = 0;
+static std::string s_online_note;               // kurze Rueckmeldung ("Einladung geschickt")
+
+static void copy_to_clipboard(const std::string& text) {
+    if (!OpenClipboard(nullptr)) return;
+    EmptyClipboard();
+    HGLOBAL h = GlobalAlloc(GMEM_MOVEABLE, text.size() + 1);
+    if (h) {
+        memcpy(GlobalLock(h), text.c_str(), text.size() + 1);
+        GlobalUnlock(h);
+        SetClipboardData(CF_TEXT, h);
+    }
+    CloseClipboard();
+}
+
+static std::string clipboard_text() {
+    std::string out;
+    if (!OpenClipboard(nullptr)) return out;
+    if (HANDLE h = GetClipboardData(CF_TEXT)) {
+        if (const char* p = (const char*)GlobalLock(h)) { out = p; GlobalUnlock(h); }
+    }
+    CloseClipboard();
+    return out;
+}
+
+static void build_online(std::vector<Row>& rows) {
+    auto& n = g_nl;
+    const NLSettings d{};
+    if (!nl_online_available()) {
+        rows.push_back(header("Online"));
+        rows.push_back(info("Online", "nicht dabei", "Dieser Build wurde ohne Steamworks SDK gebaut. Lege das SDK in den Ordner "
+                            "'steamworks_sdk' neben dem Launcher und baue das Spiel neu."));
+        return;
+    }
+    if (!nl_online_steam_ok()) {
+        rows.push_back(header("Online"));
+        rows.push_back(info("Steam", "nicht verbunden", nl_online_status() + "\n\nOnline laeuft ueber Steam: Freundesliste, Einladungen und die Verbindung. "
+                            "Starte Steam und danach das Spiel neu."));
+        return;
+    }
+    const bool hosting = nl_online_hosting();
+    const std::string room_help = "Du hostest: das Spiel laeuft bei dir, deine Freunde sehen dein TV-Bild und spielen als Wiimote 1-4 mit. "
+                                  "Sie brauchen dafuer nur NLOnline.exe und Steam - nicht das Spiel. Du selbst spielst mit dem GamePad.";
+    rows.push_back(header("Dein Raum"));
+    if (hosting) {
+        const std::string code = nl_online_code();
+        rows.push_back(button("Code", code, "Gib diesen Code deinen Freunden. Sie tippen ihn in NLOnline.exe ein. "
+                              "Enter / A kopiert ihn in die Zwischenablage.\n\n" + room_help,
+                              [code] { copy_to_clipboard(code); s_online_note = "Code kopiert."; }));
+        rows.push_back(button("Raum schliessen", "Schliessen", "Alle Mitspieler werden getrennt.", [] { nl_online_close_room(); }));
+    } else if (nl_online_opening()) {
+        rows.push_back(info("Raum", "wird erstellt ...", room_help));
+    } else {
+        rows.push_back(button("Raum oeffnen", "Oeffnen", "Erstellt einen Raum mit einem 6-stelligen Code.\n\n" + room_help,
+                              [] { nl_online_open_room(); }));
+    }
+    rows.push_back(choice("Bildqualitaet fuer Freunde", "Wie gut das Bild bei deinen Freunden ankommt. Hoeher braucht mehr Upload: "
+                          "Niedrig ca. 3,5 Mbit/s, Mittel 6, Hoch 12 - pro Freund. Gilt ab dem naechsten geoeffneten Raum.",
+                          &n.stream_quality, {"Niedrig (540p)", "Mittel (720p)", "Hoch (720p+)"}, d.stream_quality));
+
+    rows.push_back(header("Mitspieler"));
+    rows.push_back(info("GamePad", nl_steam_my_name(), "Du bist Spieler 1 mit dem GamePad."));
+    auto players = nl_online_players();
+    for (int slot = 1; slot <= 4; slot++) {
+        NLWiiSlotInfo si = nl_wii_slot(slot);
+        if (!si.used) continue;
+        std::string label = "Wiimote " + std::to_string(slot) + ": " + si.name;
+        if (!si.remote) {
+            rows.push_back(info(label, "hier am PC", "Ein weiterer Controller an diesem PC."));
+            continue;
+        }
+        for (auto& p : players) {
+            if (p.slot != slot) continue;
+            std::string v = (p.ping >= 0 ? std::to_string(p.ping) + " ms  " : std::string()) + "Rauswerfen";
+            uint64_t id = p.id;
+            rows.push_back(button(label, v, "Online-Mitspieler. Enter / A wirft ihn aus dem Raum.", [id] { nl_online_kick(id); }));
+            rows.back().dot = 1;
+        }
+    }
+    rows.push_back(onoff("Wiimote quer halten", "Fuer Controller an diesem PC: das Steuerkreuz und der linke Stick steuern wie eine quer "
+                         "gehaltene Wiimote (Mario Chase, Luigi's Mansion, Animal Crossing). Aus: wie eine aufrecht gehaltene Wiimote. "
+                         "Online-Freunde stellen das in NLOnline selbst ein.", &n.wiimote_sideways, d.wiimote_sideways));
+
+    rows.push_back(header("Beitreten"));
+    {
+        Row r;
+        r.label = "Code eingeben";
+        r.help = "Tippe den 6-stelligen Code eines Freundes und druecke Enter. Strg+V fuegt ihn ein, Ruecktaste loescht.\n\n"
+                 "Das Spiel bleibt offen; NLOnline.exe startet und verbindet dich mit dem Raum deines Freundes.";
+        r.text_entry = true;
+        r.value = [] { return s_join_code.size() < 6 ? s_join_code + "_" : s_join_code; };
+        r.press = [] {
+            if (s_join_code.size() == 6) nl_online_join(s_join_code);
+            else s_online_note = "Der Code hat 6 Zeichen.";
+        };
+        rows.push_back(r);
+    }
+
+    rows.push_back(header("Freunde"));
+    const uint64_t now = GetTickCount64();
+    if (now - s_friends_time > 1000) {
+        s_friends = nl_steam_friends();
+        s_friends_time = now;
+    }
+    if (s_friends.empty()) rows.push_back(info("Keine Freunde online", "", "Hier stehen deine Steam-Freunde, die gerade online sind."));
+    for (auto& f : s_friends) {
+        std::string v, help;
+        std::function<void()> press;
+        const uint64_t id = f.id;
+        const std::string name = f.name;
+        if (!f.code.empty()) {
+            v = "hostet  Beitreten";
+            help = name + " hostet gerade einen Raum. Enter / A: beitreten.";
+            const std::string code = f.code;
+            press = [code] { nl_online_join(code); };
+        } else {
+            v = f.in_nl ? "spielt Nintendo Land" : "online";
+            help = f.in_nl ? name + " hat Nintendo Land Recomp offen." : name + " ist auf Steam online.";
+            if (hosting) {
+                v += "  Einladen";
+                help += " Enter / A: in deinen Raum einladen (kommt als Steam-Einladung an).";
+                press = [id, name] { nl_online_invite(id); s_online_note = "Einladung an " + name + " geschickt."; };
+            } else {
+                help += " Oeffne einen Raum, um Freunde einzuladen.";
+            }
+        }
+        Row r = press ? button(name, v, help, press) : info(name, v, help);
+        r.dot = !f.code.empty() ? 2 : f.in_nl ? 1 : 0;
+        rows.push_back(r);
+    }
+}
+
 static std::vector<Row> build_tab(int tab) {
     std::vector<Row> rows;
     auto& n = g_nl;
@@ -253,7 +411,7 @@ static std::vector<Row> build_tab(int tab) {
         rows.push_back(percent("GamePad-Lautstaerke", "Ton des GamePad-Lautsprechers - nur mit eigenem GamePad-Fenster.", &n.pad_volume, d.pad_volume, 0, 100, 5));
         rows.push_back(onoff("Mikrofon", "Mikrofon des PCs als GamePad-Mikrofon. Im Spiel die Mikrofon-Taste halten.", &n.mic, d.mic, true));
         rows.push_back(percent("Mikrofon-Lautstaerke", "Wie laut das Spiel dein Mikrofon hoert.", &n.mic_volume, d.mic_volume, 0, 100, 5));
-    } else {   // Steuerung
+    } else if (tab == 3) {   // Steuerung
         rows.push_back(choice("Knopf-Layout", "Automatisch: Xbox- und PlayStation-Controller bekommen A auf den unteren Knopf (Kreuz), "
                               "Nintendo-Controller auf den rechten. Setzt die Controller-Belegung auf Standard.",
                               &n.button_layout, {"Automatisch", "Nintendo (A rechts)", "A unten (Xbox/PS)"}, d.button_layout));
@@ -284,6 +442,8 @@ static std::vector<Row> build_tab(int tab) {
             r.action = i;
             rows.push_back(r);
         }
+    } else {   // Online
+        build_online(rows);
     }
     return rows;
 }
@@ -315,7 +475,31 @@ static bool nav_edge(int which, bool down, bool repeat) {
 // ===========================================================================
 // Zustand
 // ===========================================================================
+static constexpr int kTabCount = 5;   // Bild, Spiel, Ton, Steuerung, Online
 static int s_tab = 0, s_sel = 0, s_col = 0, s_scroll = 0;
+static bool s_type_prev[256] = {};
+static bool s_was_typing = false;
+
+// Code-Eingabe im Online-Reiter: Buchstaben, Ziffern, Ruecktaste, Strg+V
+static void poll_typing() {
+    if (!s_was_typing)   // gerade erst auf die Zeile gekommen: gehaltene Tasten nicht als Eingabe werten
+        for (int vk = 0; vk < 256; vk++) s_type_prev[vk] = nl_key_down(vk);
+    auto edge = [](int vk) {
+        bool d = nl_key_down(vk);
+        bool e = d && !s_type_prev[vk];
+        s_type_prev[vk] = d;
+        return e;
+    };
+    const bool ctrl = nl_key_down(VK_CONTROL);
+    if (ctrl && edge('V')) { s_join_code = nl_normalize_code(s_join_code + clipboard_text()); return; }
+    for (int vk = 'A'; vk <= 'Z'; vk++)
+        if (edge(vk) && !ctrl) s_join_code = nl_normalize_code(s_join_code + (char)vk);
+    for (int vk = '0'; vk <= '9'; vk++)
+        if (edge(vk)) s_join_code = nl_normalize_code(s_join_code + (char)vk);
+    for (int vk = VK_NUMPAD0; vk <= VK_NUMPAD9; vk++)
+        if (edge(vk)) s_join_code = nl_normalize_code(s_join_code + (char)('0' + vk - VK_NUMPAD0));
+    if (edge(VK_BACK) && !s_join_code.empty()) s_join_code.pop_back();
+}
 static int s_capture_action = -1, s_capture_col = 0;
 static uint64_t s_capture_start = 0;
 static NLPadSnapshot s_capture_rest;
@@ -470,20 +654,24 @@ static void render_menu(int w, int h) {
     }
 
     // ---------------- Eingabe ----------------
+    const bool typing = s_bottom < 0 && selectable(s_sel) && rows[s_sel].text_entry && s_capture_action < 0;
+    if (typing) poll_typing();
+    s_was_typing = typing;
     NLPadSnapshot ps = nl_pad_snapshot();
     const bool xb = nl_a_is_bottom();
     auto pb = [&](int b) { return ps.connected && ((ps.buttons >> b) & 1); };
     const int PAD_OK = xb ? 0 : 1, PAD_BACK = xb ? 1 : 0;   // Nintendo: A rechts, B unten
     bool in[N_COUNT] = {};
     if (s_capture_action < 0) {
-        in[N_UP] = nav_edge(N_UP, nl_key_down(VK_UP) || nl_key_down('W') || pb(11) || ps.ly < -0.6f, true);
-        in[N_DOWN] = nav_edge(N_DOWN, nl_key_down(VK_DOWN) || nl_key_down('S') || pb(12) || ps.ly > 0.6f, true);
-        in[N_LEFT] = nav_edge(N_LEFT, nl_key_down(VK_LEFT) || nl_key_down('A') || pb(13) || ps.lx < -0.6f, true);
-        in[N_RIGHT] = nav_edge(N_RIGHT, nl_key_down(VK_RIGHT) || nl_key_down('D') || pb(14) || ps.lx > 0.6f, true);
-        in[N_OK] = nav_edge(N_OK, nl_key_down(VK_RETURN) || nl_key_down(VK_SPACE) || pb(PAD_OK), false);
-        in[N_BACK] = nav_edge(N_BACK, nl_key_down(VK_BACK) || pb(PAD_BACK), false);
-        in[N_TAB_L] = nav_edge(N_TAB_L, nl_key_down('Q') || pb(9), false);
-        in[N_TAB_R] = nav_edge(N_TAB_R, nl_key_down('E') || pb(10), false);
+        const bool letters = !typing;   // beim Code-Tippen sind W/A/S/D/Q/E und Ruecktaste Buchstaben
+        in[N_UP] = nav_edge(N_UP, nl_key_down(VK_UP) || (letters && nl_key_down('W')) || pb(11) || ps.ly < -0.6f, true);
+        in[N_DOWN] = nav_edge(N_DOWN, nl_key_down(VK_DOWN) || (letters && nl_key_down('S')) || pb(12) || ps.ly > 0.6f, true);
+        in[N_LEFT] = nav_edge(N_LEFT, nl_key_down(VK_LEFT) || (letters && nl_key_down('A')) || pb(13) || ps.lx < -0.6f, true);
+        in[N_RIGHT] = nav_edge(N_RIGHT, nl_key_down(VK_RIGHT) || (letters && nl_key_down('D')) || pb(14) || ps.lx > 0.6f, true);
+        in[N_OK] = nav_edge(N_OK, nl_key_down(VK_RETURN) || (letters && nl_key_down(VK_SPACE)) || pb(PAD_OK), false);
+        in[N_BACK] = nav_edge(N_BACK, (letters && nl_key_down(VK_BACK)) || pb(PAD_BACK), false);
+        in[N_TAB_L] = nav_edge(N_TAB_L, (letters && nl_key_down('Q')) || pb(9), false);
+        in[N_TAB_R] = nav_edge(N_TAB_R, (letters && nl_key_down('E')) || pb(10), false);
         in[N_CLEAR] = nav_edge(N_CLEAR, nl_key_down(VK_DELETE) || pb(xb ? 2 : 3), false);
     } else {
         for (int i = 0; i < N_COUNT; i++) s_nav.held[i] = true;   // nach der Aufnahme nichts ausloesen
@@ -491,7 +679,7 @@ static void render_menu(int w, int h) {
     poll_capture();
 
     if (in[N_TAB_L] || in[N_TAB_R]) {
-        s_tab = (s_tab + (in[N_TAB_R] ? 1 : 3)) % 4;
+        s_tab = (s_tab + (in[N_TAB_R] ? 1 : kTabCount - 1)) % kTabCount;
         s_sel = 0;
         s_scroll = 0;
         s_bottom = -1;
@@ -520,7 +708,9 @@ static void render_menu(int w, int h) {
                     if (s_col == 0) b.key1 = 0; else if (s_col == 1) b.key2 = 0; else b.pad = -1;
                     nl_input_save();
                 }
-            } else {
+            } else if (r.press) {
+                if (in[N_OK] || (in[N_RIGHT] && !r.text_entry)) r.press();
+            } else if (r.change) {
                 if (in[N_LEFT]) r.change(-1);
                 if (in[N_RIGHT] || in[N_OK]) r.change(+1);
             }
@@ -567,10 +757,10 @@ static void render_menu(int w, int h) {
     text_at(dl, f_small, fs_small, ImVec2(p1.x - pad - measure(f_small, fs_small, ver).x, p0.y + 42 * u), C_DIM, ver);
 
     // Reiter
-    const char* tabs[] = {"Bild", "Spiel", "Ton", "Steuerung"};
+    const char* tabs[kTabCount] = {"Bild", "Spiel", "Ton", "Steuerung", "Online"};
     float tab_x = p0.x + pad;
     const float tab_y = p0.y + 86 * u, tab_h = 46 * u;
-    for (int i = 0; i < 4; i++) {
+    for (int i = 0; i < kTabCount; i++) {
         float tw = measure(f, fs, tabs[i]).x + 44 * u;
         ImVec2 a(tab_x, tab_y), b(tab_x + tw, tab_y + tab_h);
         bool active = i == s_tab;
@@ -624,8 +814,27 @@ static void render_menu(int w, int h) {
             dl->AddRect(ImVec2(a.x - 3 * u, a.y - 3 * u), ImVec2(b.x + 3 * u, b.y + 3 * u), col(0, 174, 239, 70), 17 * u, 0, 4 * u);
             dl->AddRect(a, b, C_SEL, 14 * u, 0, 2.5f * u);
         }
-        text_at(dl, f, fs, ImVec2(a.x + 20 * u, y + (row_h - fs) / 2), C_TEXT, r.label);
-        if (r.action >= 0) {
+        float label_x = a.x + 20 * u;
+        if (r.dot) {
+            dl->AddCircleFilled(ImVec2(a.x + 24 * u, y + row_h / 2), 7 * u, r.dot == 2 ? C_ACCENT : col(70, 200, 90), 16);
+            label_x += 22 * u;
+        }
+        text_at(dl, f, fs, ImVec2(label_x, y + (row_h - fs) / 2), C_TEXT, r.label);
+        if (r.press || (!r.change && r.action < 0)) {
+            // Knopf- oder Info-Zeile: Wert rechts, bei Knoepfen in einer Glas-Pille
+            std::string v = r.value ? r.value() : std::string();
+            ImVec2 tsz = measure(f, fs, v);
+            const float vx1 = b.x - 16 * u, vx0 = vx1 - tsz.x - 40 * u;
+            if (r.press && !v.empty()) {
+                ImVec2 pa(vx0, y + 8 * u), pb2(vx1, y + row_h - 8 * u);
+                if (sel || hit(a, b)) accent_pill(dl, pa, pb2, (row_h - 16 * u) / 2, u);
+                else glass_tile(dl, pa, pb2, (row_h - 16 * u) / 2, col(242, 245, 248), C_EDGE, u, false);
+                text_center(dl, f, fs, pa, pb2, (sel || hit(a, b)) ? C_ON_ACCENT : C_TEXT, v);
+            } else {
+                text_at(dl, f, fs, ImVec2(vx1 - tsz.x - 4 * u, y + (row_h - fs) / 2), r.text_entry ? C_ACCENT : C_DIM, v);
+            }
+            if (clicked(a, b)) { s_sel = i; s_bottom = -1; if (r.press && !r.text_entry) r.press(); }
+        } else if (r.action >= 0) {
             const auto& bind = nl_binding(r.action);
             for (int c = 0; c < 3; c++) {
                 ImVec2 ca(cells_x + c * (cell_w + 8 * u), y + 6 * u), cb(ca.x + cell_w, y + row_h - 6 * u);
@@ -679,6 +888,13 @@ static void render_menu(int w, int h) {
                     "Feld waehlen und Enter / A druecken, dann die Taste oder den Controller-Knopf. Entf / X leert das Feld. "
                     "Eine Taste gibt es nur einmal: sie wandert hierher. Ein Controller-Knopf tauscht mit der Aktion, die ihn vorher hatte.";
         if (r.restart) help += "\n\nWirkt nach einem Neustart.";
+    }
+    if (s_tab == 4) {
+        if (!s_online_note.empty()) help += "\n\n" + s_online_note;
+        std::string st = nl_online_status();
+        if (!st.empty() && nl_online_steam_ok()) help += "\n\n" + st;
+        std::string enc = nl_online_encoder();
+        if (!enc.empty()) help += "\nVideo: " + enc;
     }
     if (controls) {
         std::string gp = nl_gamepad_name();

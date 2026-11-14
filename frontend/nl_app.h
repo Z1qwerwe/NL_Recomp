@@ -4,6 +4,9 @@
 #include <string>
 #include <atomic>
 #include <filesystem>
+#include <functional>
+#include <vector>
+#include <cstdint>
 
 // ---------------------------------------------------------------------------
 // Einstellungen (nl_data/nl_settings.ini, gehoert dem Spiel, wird im Menue geaendert)
@@ -40,6 +43,9 @@ struct NLSettings {
     int stick_camera_speed = 100;// Prozent, wie schnell der rechte Stick neigt
     bool pad_gyro = true;        // Gyro des Controllers (PS5, PS4, Switch Pro ...) als GamePad-Neigen benutzen
     int deadzone = 20;           // Prozent
+    // Online
+    bool wiimote_sideways = true;// Controller als quer gehaltene Wiimote (Steuerkreuz gedreht, Stick steuert mit)
+    int stream_quality = 1;      // 0 niedrig (540p), 1 mittel (720p), 2 hoch (720p, mehr Bitrate)
 };
 extern NLSettings g_nl;
 
@@ -108,3 +114,40 @@ bool nl_det_init();   // NL_DET=1 -> an
 enum class NLRequest { SaveSettings, ApplyFullscreen, Restart, Quit };
 void nl_request(NLRequest r);
 bool nl_key_down(uint32_t vk);
+
+// ---------------------------------------------------------------------------
+// Wiimote-Spieler 2-5 aus normalen Controllern (nl_wiipad.cpp)
+// ---------------------------------------------------------------------------
+struct NLWiiIn {
+    uint32_t buttons = 0;                 // SDL3-Gamepad-Knopfnummern als Bits
+    float lx = 0, ly = 0, rx = 0, ry = 0; // -1..1, y nach unten positiv (wie SDL)
+    float lt = 0, rt = 0;                 // 0..1
+    bool sideways = true;                 // Wiimote quer halten
+    bool connected = true;
+};
+using NLWiiSource = std::function<NLWiiIn()>;
+struct NLWiiSlotInfo { bool used = false; bool remote = false; std::string name; };
+int nl_wii_attach(const std::string& name, bool remote, NLWiiSource src);   // 1-4 oder -1 (voll)
+void nl_wii_detach(int slot);
+NLWiiSlotInfo nl_wii_slot(int slot);
+int nl_wii_free_slots();
+
+// ---------------------------------------------------------------------------
+// Online (nl_online.cpp): Raum hosten, Bild/Ton streamen, Freunde als Wiimote-Spieler
+// ---------------------------------------------------------------------------
+void nl_online_init();                    // Steam verbinden, Hooks setzen (nach dem Spielstart)
+void nl_online_shutdown();
+bool nl_online_steam_ok();
+bool nl_online_available();               // mit Steamworks SDK gebaut?
+void nl_online_open_room();               // Raum oeffnen -> Code
+void nl_online_close_room();
+bool nl_online_hosting();
+bool nl_online_opening();                 // Raum wird gerade erstellt
+std::string nl_online_code();
+std::string nl_online_status();           // letzte Meldung fuer das Menue
+struct NLOnlinePlayer { uint64_t id = 0; int slot = 0; std::string name; int ping = -1; };
+std::vector<NLOnlinePlayer> nl_online_players();
+void nl_online_kick(uint64_t id);
+void nl_online_invite(uint64_t friend_id);
+void nl_online_join(const std::string& code);   // startet NLOnline.exe mit dem Code
+std::string nl_online_encoder();          // Name des Video-Encoders
