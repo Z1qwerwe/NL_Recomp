@@ -23,6 +23,7 @@
 #endif
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <mutex>
@@ -388,17 +389,10 @@ void nl_wii_update_motion_mode() {
     }
 }
 
-int nl_wii_bluetooth_count() {
-#if HAS_WIIMOTE
-    auto provider = InputManager::instance().get_api_provider(InputAPI::Wiimote);
-    if (!provider) return 0;
-    int n = 0;
-    for (auto& c : provider->get_controllers()) n += c->is_connected() ? 1 : 0;
-    return n;
-#else
-    return 0;
-#endif
-}
+// Anzahl wird im Eingabe-Thread (nl_wii_update_native, alle ~2 s) ermittelt. Nicht im Menue abfragen:
+// Cemus get_controllers() legt jedes Mal neue Controller an und spricht die Wiimotes an.
+static std::atomic<int> s_bt_count{0};
+int nl_wii_bluetooth_count() { return s_bt_count; }
 
 int nl_wii_free_slots() {
     std::scoped_lock l(s_mx);
@@ -447,7 +441,11 @@ void nl_wii_update_native() {
         }
     }
     // neue Wiimotes einhaengen
-    for (auto& c : provider->get_controllers()) {
+    const auto controllers = provider->get_controllers();
+    int connected = 0;
+    for (auto& c : controllers) connected += c->is_connected() ? 1 : 0;
+    s_bt_count = connected;
+    for (auto& c : controllers) {
         if (!c->is_connected()) continue;
         bool known = false;
         for (int i = 1; i <= 4; i++) known |= s_slots[i].native && s_slots[i].native->uuid() == c->uuid();
