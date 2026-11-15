@@ -69,7 +69,7 @@ static std::atomic<bool> s_loading{true};
 void WindowSystem::Create() {}
 
 void WindowSystem::ShowErrorDialog(std::string_view message, std::string_view title, std::optional<ErrorCategory>) {
-    std::wstring t = boost::nowide::widen(title.empty() ? std::string_view("Nintendo Land") : title);
+    std::wstring t = boost::nowide::widen(title.empty() ? std::string_view("NL Recomp") : title);
     std::wstring m = boost::nowide::widen(message);
     MessageBoxW(s_window, m.c_str(), t.c_str(), MB_OK | MB_ICONERROR);
 }
@@ -126,7 +126,7 @@ bool WindowSystem::IsFullScreen() { return g_window_info.is_fullscreen; }
 // ===========================================================================
 static void fatal(const std::string& msg) {
     cemuLog_log(LogType::Force, "Nintendo Land: {}", msg);
-    WindowSystem::ShowErrorDialog(msg, "Nintendo Land");
+    WindowSystem::ShowErrorDialog(msg, "NL Recomp");
     exit(1);
 }
 
@@ -323,6 +323,8 @@ static void screens_layout(int w, int h, bool drc_big, int* tv, int* drc) {
 }
 
 
+static bool s_skip_chat_char = false;
+
 static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
     case WM_CLOSE:
@@ -357,8 +359,24 @@ static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             nl_mouse_add_delta(ri.data.mouse.lLastX, ri.data.mouse.lLastY);
         return DefWindowProcW(hwnd, msg, wp, lp);
     }
+    case WM_CHAR:
+        if (g_nl_chat_open) {
+            if (s_skip_chat_char) s_skip_chat_char = false;   // das 'y' der Oeffnen-Taste
+            else nl_chat_char((uint32)wp);
+        }
+        return 0;
     case WM_KEYDOWN:
     case WM_SYSKEYDOWN:
+        if (g_nl_chat_open) {   // Chat tippt: Tasten gehen nicht ans Spiel
+            nl_chat_key((uint32)wp);
+            return 0;
+        }
+        if (wp == 'Y' && !(lp & (1 << 30)) && !g_nl_menu_open && nl_chat_available()) {
+            for (uint32 vk = 0; vk < 256; vk++) g_window_info.set_keystate(vk, false);   // gehaltene Tasten loslassen
+            s_skip_chat_char = true;
+            nl_chat_open();
+            return 0;
+        }
         if (wp == VK_F11 || (wp == VK_RETURN && (lp & (1 << 29)))) {
             if (!(lp & (1 << 30))) {
                 set_fullscreen(!g_window_info.is_fullscreen);
@@ -413,8 +431,8 @@ static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         nl_input_hotplug();
         const char* view = g_nl_screens.mode ? (LatteGPUState.isDRCPrimary ? "GamePad gross" : "TV gross")
                                              : (LatteGPUState.isDRCPrimary ? "GamePad-Bild" : "TV-Bild");
-        std::string t = s_loading ? std::string("Nintendo Land - laedt ...")
-                                  : fmt::format("Nintendo Land - {:.0f} FPS - {}   |   Tab: Bilder tauschen   Klick ins Bild: Maus-Kamera   Esc: Maus frei / Menue",
+        std::string t = s_loading ? std::string("NL Recomp - laedt ...")
+                                  : fmt::format("NL Recomp - {:.0f} FPS - {}   |   Tab: Bilder tauschen   Klick ins Bild: Maus-Kamera   Esc: Maus frei / Menue",
                                                 s_fps.load(), view);
         SetWindowTextW(s_window, boost::nowide::widen(t).c_str());
         return 0;
@@ -594,10 +612,10 @@ int main(int argc, char* argv[]) {
         fatal("Kein Spiel angegeben. Bitte ueber den Launcher starten.");
 
     // Fenster
-    s_window = make_window(L"Nintendo Land", g_nl.window_w, g_nl.window_h);
+    s_window = make_window(L"NL Recomp", g_nl.window_w, g_nl.window_h);
     if (!s_window) fatal("Fenster konnte nicht erstellt werden.");
     if (g_nl.gamepad_window) {
-        s_pad_window = make_window(L"Nintendo Land - GamePad", 854, 480);
+        s_pad_window = make_window(L"NL Recomp - GamePad", 854, 480);
         g_window_info.pad_open = s_pad_window != nullptr;
     }
     g_window_info.app_active = true;

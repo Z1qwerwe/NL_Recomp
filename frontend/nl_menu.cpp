@@ -84,7 +84,7 @@ void nl_settings_load(const std::filesystem::path& path) {
 void nl_settings_save() {
     const auto& n = g_nl;
     std::ofstream f(s_settings_path);
-    f << "# Nintendo Land Einstellungen (im Spiel: Esc)\n"
+    f << "# NL Recomp Einstellungen (im Spiel: Esc)\n"
       << "fullscreen=" << n.fullscreen << "\nvsync=" << n.vsync << "\nperf_overlay=" << n.perf_overlay
       << "\ngamepad_window=" << n.gamepad_window << "\nres_scale=" << n.res_scale << "\nupscale=" << n.upscale
       << "\ndownscale=" << n.downscale << "\naspect=" << n.aspect << "\naniso=" << n.aniso
@@ -124,7 +124,7 @@ void nl_write_resolution_pack(const std::filesystem::path& data_dir) {
     f << "# Wird von NintendoLand.exe geschrieben - im Spiel unter Esc -> Bild einstellen\n"
          "[Definition]\n"
          "titleIds = 0005000010101E00,0005000010101F00,0005000010102100\n"
-         "name = Nintendo Land Recomp\n"
+         "name = NL Recomp\n"
          "version = 6\n\n";
     const float s = kResScales[g_nl.res_scale].factor;
     if (s != 1.0f) {
@@ -276,7 +276,8 @@ static void build_online(std::vector<Row>& rows) {
     }
     const bool hosting = nl_online_hosting();
     const std::string room_help = "Du hostest: das Spiel laeuft bei dir, deine Freunde sehen dein TV-Bild und spielen als Wiimote 1-4 mit. "
-                                  "Sie brauchen dafuer nur NLOnline.exe und Steam - nicht das Spiel. Du selbst spielst mit dem GamePad.";
+                                  "Sie brauchen dafuer nur NLOnline.exe und Steam - nicht das Spiel. Du selbst spielst mit dem GamePad. "
+                                  "Im Spiel oeffnet Y den Chat.";
     rows.push_back(header("Dein Raum"));
     if (hosting) {
         const std::string code = nl_online_code();
@@ -350,8 +351,8 @@ static void build_online(std::vector<Row>& rows) {
             const std::string code = f.code;
             press = [code] { nl_online_join(code); };
         } else {
-            v = f.in_nl ? "spielt Nintendo Land" : "online";
-            help = f.in_nl ? name + " hat Nintendo Land Recomp offen." : name + " ist auf Steam online.";
+            v = f.in_nl ? "spielt NL" : "online";
+            help = f.in_nl ? name + " hat NL Recomp offen." : name + " ist auf Steam online.";
             if (hosting) {
                 v += "  Einladen";
                 help += " Enter / A: in deinen Raum einladen (kommt als Steam-Einladung an).";
@@ -399,7 +400,7 @@ static std::vector<Row> build_tab(int tab) {
         rows.push_back(choice("Bildformat", "16:9 mit schwarzen Balken behalten oder das Bild aufs ganze Fenster strecken.",
                               &n.aspect, {"16:9 behalten", "Strecken"}, d.aspect));
     } else if (tab == 1) {   // Spiel
-        rows.push_back(choice("Grosses Bild beim Start", "Welches Bild beim Start gross ist. Nintendo Land fragt am Anfang vieles auf dem GamePad.",
+        rows.push_back(choice("Grosses Bild beim Start", "Welches Bild beim Start gross ist. Das Spiel fragt am Anfang vieles auf dem GamePad.",
                               &n.start_view, {"TV", "GamePad"}, d.start_view));
         {
             std::vector<std::string> names(std::begin(kLanguages), std::end(kLanguages));
@@ -946,6 +947,42 @@ static void render_menu(int w, int h) {
 }
 
 // Wird jedes Bild vom Unterbau aufgerufen (pad_view = Bild fuer das GamePad-Fenster)
+// ---------------------------------------------------------------------------
+// Chat-Anzeige (oben links, verblasst nach ein paar Sekunden) und Eingabezeile
+// ---------------------------------------------------------------------------
+static void draw_chat(int w, int h) {
+    if (!g_nl_chat_open && !nl_chat_available()) return;
+    const auto lines = nl_online_chat_lines();
+    const uint64_t now = nl_online_now_ms();
+    const float u = std::max(0.6f, h / 1080.0f);
+    const float fs = 22 * u;
+    ImFont* f = ImGui_GetFont(fs);
+    ImDrawList* dl = ImGui::GetForegroundDrawList();
+    float y = 18 * u;
+    const float x = 18 * u;
+    for (const auto& ln : lines) {
+        const uint64_t age = now - ln.ms;
+        if (!g_nl_chat_open && age > 10000) continue;
+        const float a = (!g_nl_chat_open && age > 8000) ? 1.0f - (age - 8000) / 2000.0f : 1.0f;
+        const std::string name = ln.system ? "" : ln.name + ": ";
+        const ImVec2 sn = measure(f, fs, name), st = measure(f, fs, ln.text);
+        const ImVec2 p0(x, y), p1(x + sn.x + st.x + 24 * u, y + fs + 12 * u);
+        dl->AddRectFilled(p0, p1, col(255, 255, 255, (int)(215 * a)), 12 * u);
+        if (!name.empty()) text_at(dl, f, fs, ImVec2(x + 12 * u, y + 6 * u), col(0, 174, 239, (int)(255 * a)), name);
+        text_at(dl, f, fs, ImVec2(x + 12 * u + sn.x, y + 6 * u), ln.system ? col(90, 100, 115, (int)(255 * a)) : col(30, 40, 55, (int)(255 * a)), ln.text);
+        y += fs + 18 * u;
+    }
+    if (!g_nl_chat_open) return;
+    const float bw = std::min(w - 36 * u, 760 * u), bh = fs + 26 * u;
+    const ImVec2 b0(x, h - bh - 24 * u), b1(x + bw, h - 24 * u);
+    dl->AddRectFilled(b0, b1, col(255, 255, 255, 235), bh / 2);
+    dl->AddRect(b0, b1, col(0, 174, 239), bh / 2, 0, 2 * u);
+    const bool blink = (now / 500) % 2 == 0;
+    text_at(dl, f, fs, ImVec2(b0.x + 20 * u, b0.y + 13 * u), col(30, 40, 55), "Chat: " + nl_chat_input() + (blink ? "|" : ""));
+    const std::string hint = "Enter senden   Esc abbrechen";
+    text_at(dl, f, fs * 0.8f, ImVec2(b1.x - measure(f, fs * 0.8f, hint).x - 20 * u, b0.y + 16 * u), col(120, 130, 145), hint);
+}
+
 static void overlay_hook(bool pad_view) {
     if (pad_view && WindowSystem::IsPadWindowOpen()) return;   // Menue nur im Hauptfenster
     // Esc und Home/Guide oeffnen/schliessen das Menue
@@ -953,9 +990,10 @@ static void overlay_hook(bool pad_view) {
     bool esc_edge = esc && !s_esc_last;
     s_esc_last = esc;
     if (nl_pad_menu_pressed() || (esc_edge && s_capture_action < 0)) nl_menu_toggle();
-    if (!g_nl_menu_open) return;
     int w = 0, h = 0;
     WindowSystem::GetWindowPhysSize(w, h);
+    if (w > 0 && h > 0 && !g_nl_menu_open) draw_chat(w, h);
+    if (!g_nl_menu_open) return;
     if (w > 0 && h > 0) render_menu(w, h);
 }
 

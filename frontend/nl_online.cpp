@@ -62,6 +62,32 @@ void set_status(const std::string& s) {
     cemuLog_log(LogType::Force, "Online: {}", s);
 }
 
+// ---------------------------------------------------------------- Chat
+std::mutex s_chat_mx;
+std::vector<NLChatLine> s_chat;          // letzte Nachrichten (fuer die Anzeige)
+std::string s_chat_input;
+
+uint64_t now_ms() { return (uint64_t)std::chrono::duration_cast<std::chrono::milliseconds>(clk::now().time_since_epoch()).count(); }
+
+void chat_add(const std::string& name, const std::string& text) {
+    std::scoped_lock l(s_chat_mx);
+    s_chat.push_back({name, text, now_ms(), name.empty()});
+    if (s_chat.size() > 50) s_chat.erase(s_chat.begin());
+}
+
+// an alle Gaeste schicken (leerer Name = Systemmeldung). Ruft man mit s_mx gehalten auf.
+void chat_broadcast_locked(const std::string& name, const std::string& text) {
+    Chat c;
+    strncpy(c.name, name.c_str(), sizeof(c.name) - 1);
+    strncpy(c.text, text.c_str(), sizeof(c.text) - 1);
+    for (auto& [id, cl] : s_clients) nl_net_send(id, CH_CONTROL, &c, sizeof(c), true);
+}
+
+void system_msg_locked(const std::string& text) {
+    chat_add("", text);
+    chat_broadcast_locked("", text);
+}
+
 void update_peers_locked() {
     std::scoped_lock l(s_peer_mx);
     s_peers.clear();
@@ -69,7 +95,7 @@ void update_peers_locked() {
 }
 
 void update_presence_locked() {
-    if (!s_hosting) { nl_steam_set_status("Spielt Nintendo Land"); return; }
+    if (!s_hosting) { nl_steam_set_status("Spielt NL"); return; }
     nl_steam_set_status("Hostet einen Raum (" + std::to_string(s_clients.size() + 1) + "/5)");
 }
 
@@ -157,6 +183,7 @@ void remove_client_locked(uint64_t id, bool send_bye, uint8_t type = MSG_BYE) {
     }
     const int slot = it->second.slot;
     set_status(it->second.name + " ist gegangen.");
+    system_msg_locked(it->second.name + " ist gegangen.");
     s_clients.erase(it);
     update_peers_locked();
     {
@@ -221,6 +248,7 @@ void handle_hello_locked(uint64_t from, const Hello& h) {
         it = s_clients.emplace(from, c).first;
         update_peers_locked();
         set_status(name + " spielt jetzt als Wiimote " + std::to_string(slot) + " mit.");
+        system_msg_locked(name + " ist dabei (Wiimote " + std::to_string(slot) + ").");
         update_presence_locked();
     }
     if (!ensure_encoder_locked()) return;
@@ -273,6 +301,17 @@ void net_loop() {
                 if (clk::now() - s_last_key_req > std::chrono::milliseconds(250)) {
                     s_last_key_req = clk::now();
                     s_encoder.request_keyframe();
+                }
+                break;
+            case MSG_CHAT:
+                if (n >= sizeof(Chat) && it != s_clients.end()) {
+                    Chat c;
+                    memcpy(&c, d, sizeof(c));
+                    std::string text(c.text, strnlen(c.text, sizeof(c.text)));
+                    if (!text.empty()) {
+                        chat_add(it->second.name, text);                   // Name vom Host, nicht vom Gast
+                        chat_broadcast_locked(it->second.name, text);
+                    }
                 }
                 break;
             case MSG_STATS:
@@ -344,7 +383,7 @@ void nl_online_init() {
         s_status = "Steam laeuft nicht - starte Steam und dann das Spiel neu.";
         return;
     }
-    nl_steam_set_status("Spielt Nintendo Land");
+    nl_steam_set_status("Spielt NL");
     // Einladung angenommen, waehrend das Spiel laeuft -> als Gast beitreten
     nl_steam_on_join_request([](std::string code) { nl_online_join(code); });
     s_status = "Mit Steam verbunden als " + nl_steam_my_name() + ".";
@@ -439,3 +478,77 @@ void nl_online_join(const std::string& code) {
         set_status("NLOnline wird gestartet ...");
     }
 }
+
+// ===========================================================================
+// Chat (Taste Y im Spiel)
+// ===========================================================================
+bool g_nl_chat_open = false;
+
+bool nl_chat_available() {
+    std::scoped_lock l(s_mx);
+    return s_hosting;
+}
+
+void nl_chat_open() {
+    if (!nl_chat_available()) return;
+    std::scoped_lock l(s_chat_mx);
+    s_chat_input.clear();
+    g_nl_chat_open = true;
+}
+
+void nl_chat_close() {
+    std::scoped_lock l(s_chat_mx);
+    g_nl_chat_open = false;
+    s_chat_input.clear();
+}
+
+std::string nl_chat_input() {
+    std::scoped_lock l(s_chat_mx);
+    return s_chat_input;
+}
+
+static void append_utf8(std::string& s, uint32_t cp) {
+    if (cp < 0x80) s += (char)cp;
+    else if (cp < 0x800) { s += (char)(0xC0 | (cp >> 6)); s += (char)(0x80 | (cp & 0x3F)); }
+    else { s += (char)(0xE0 | (cp >> 12)); s += (char)(0x80 | ((cp >> 6) & 0x3F)); s += (char)(0x80 | (cp & 0x3F)); }
+}
+
+void nl_chat_char(uint32_t ch) {
+    if (!g_nl_chat_open || ch < 32 || ch == 127 || (ch >= 0xD800 && ch <= 0xDFFF)) return;
+    std::scoped_lock l(s_chat_mx);
+    if (s_chat_input.size() < sizeof(Chat::text) - 4) append_utf8(s_chat_input, ch);
+}
+
+void nl_chat_key(uint32_t vk) {
+    if (!g_nl_chat_open) return;
+    if (vk == VK_ESCAPE) { nl_chat_close(); return; }
+    if (vk == VK_BACK) {
+        std::scoped_lock l(s_chat_mx);
+        while (!s_chat_input.empty()) {   // ganzes UTF-8-Zeichen loeschen
+            const unsigned char c = (unsigned char)s_chat_input.back();
+            s_chat_input.pop_back();
+            if ((c & 0xC0) != 0x80) break;
+        }
+        return;
+    }
+    if (vk == VK_RETURN) {
+        std::string text = nl_chat_input();
+        nl_chat_close();
+        if (!text.empty()) nl_online_send_chat(text);
+    }
+}
+
+void nl_online_send_chat(const std::string& text) {
+    const std::string me = nl_steam_my_name();
+    chat_add(me, text);
+    std::scoped_lock l(s_mx);
+    chat_broadcast_locked(me, text);
+}
+
+std::vector<NLChatLine> nl_online_chat_lines() {
+    std::scoped_lock l(s_chat_mx);
+    const size_t n = std::min<size_t>(s_chat.size(), 8);
+    return std::vector<NLChatLine>(s_chat.end() - n, s_chat.end());
+}
+
+uint64_t nl_online_now_ms() { return now_ms(); }

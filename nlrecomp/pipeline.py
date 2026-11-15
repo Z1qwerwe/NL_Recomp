@@ -250,7 +250,7 @@ def _pack_online_client(bin_dir, log):
             if os.path.isfile(path):
                 z.write(path, os.path.join("NLOnline", f))
         z.writestr("NLOnline/LIESMICH.txt",
-                   "Nintendo Land - Online mitspielen\r\n\r\n"
+                   "NL Recomp - Online mitspielen\r\n\r\n"
                    "1. Steam starten und anmelden.\r\n"
                    "2. NLOnline.exe starten.\r\n"
                    "3. Den Code vom Host eintippen oder in der Freundesliste auf 'Beitreten' klicken.\r\n\r\n"
@@ -305,7 +305,7 @@ def step_launch(settings, game, log):
         if os.name == "nt":
             subprocess.run(["taskkill", "/F", "/IM", "NintendoLand.exe"], capture_output=True)
         data = os.path.join(os.path.dirname(game_exe), "nl_data")
-        log("Starte Nintendo Land ...  (Esc = Menue mit Grafik, Ton und Steuerung, Tab = TV/GamePad-Bild)")
+        log("Starte NL Recomp ...  (Esc = Menue mit Grafik, Ton und Steuerung, Tab = TV/GamePad-Bild)")
         subprocess.Popen([game_exe, game.rpx], cwd=os.path.dirname(game_exe))
         log(f"Log vom Spiel: {os.path.join(data, 'log.txt')}")
         return

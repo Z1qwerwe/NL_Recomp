@@ -18,6 +18,7 @@
 #include "../net/nl_proto.h"
 #include "../net/nl_steam.h"
 #include "../net/nl_video.h"
+#include "nl_logo_rgba.h"
 
 #include <algorithm>
 #include <atomic>
@@ -73,6 +74,20 @@ static std::atomic<bool> s_sideways{true};
 static std::atomic<bool> s_overlay{false};   // Esc-Menue offen -> keine Eingaben ans Spiel
 
 static std::string s_code_buf;              // getippter Code
+
+// Chat
+struct ChatLine { std::string name, text; clk::time_point t; };
+static std::mutex s_chat_mx;
+static std::vector<ChatLine> s_chat;
+static std::atomic<bool> s_chat_open{false};
+static bool s_chat_focus = false, s_chat_skip_char = false;
+static char s_chat_buf[200] = {};
+
+static void chat_add(const std::string& name, const std::string& text) {
+    std::scoped_lock l(s_chat_mx);
+    s_chat.push_back({name, text, clk::now()});
+    if (s_chat.size() > 50) s_chat.erase(s_chat.begin());
+}
 static std::atomic<float> s_vid_x0{0}, s_vid_y0{0}, s_vid_x1{0}, s_vid_y1{0};   // Bild im Fenster (Pixel)
 
 // Mausposition auf dem gestreamten Bild (0..1), false wenn die Maus nicht drauf ist
@@ -283,7 +298,7 @@ static void net_loop() {
                 if (n >= sizeof(Full)) {
                     const uint8_t reason = d[1];
                     leave_session(false);
-                    set_error(reason == 1 ? "Der Host hat eine andere Version von Nintendo Land Recomp."
+                    set_error(reason == 1 ? "Der Host hat eine andere Version von NL Recomp."
                                           : reason == 2 ? "Der Raum ist nicht mehr offen." : "Der Raum ist voll (4 Wiimote-Spieler).");
                 }
                 break;
@@ -294,6 +309,13 @@ static void net_loop() {
             case MSG_KICK:
                 leave_session(false);
                 set_error("Der Host hat dich aus dem Raum genommen.");
+                break;
+            case MSG_CHAT:
+                if (n >= sizeof(Chat)) {
+                    Chat c;
+                    memcpy(&c, d, sizeof(c));
+                    chat_add(std::string(c.name, strnlen(c.name, sizeof(c.name))), std::string(c.text, strnlen(c.text, sizeof(c.text))));
+                }
                 break;
             case MSG_PONG:
                 if (n >= sizeof(Ping)) {
@@ -368,7 +390,7 @@ static void net_loop() {
                     std::scoped_lock l(s_in_mx);
                     in = s_input;
                 }
-                if (s_overlay) in = Input{};
+                if (s_overlay || s_chat_open) in = Input{};
                 in.seq = ++input_seq;
                 in.flags = (uint8_t)((in.flags & IN_POINTER) | (s_sideways ? IN_SIDEWAYS : 0));
                 nl_net_send(host, CH_INPUT, &in, sizeof(in), false);
@@ -536,6 +558,25 @@ static bool d3d_init(HWND hwnd) {
     return true;
 }
 
+static ID3D11ShaderResourceView* s_logo_srv = nullptr;
+
+static void create_logo_texture() {
+    D3D11_TEXTURE2D_DESC td{};
+    td.Width = td.Height = kNLLogoRGBASize;
+    td.MipLevels = 1;
+    td.ArraySize = 1;
+    td.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    td.SampleDesc.Count = 1;
+    td.Usage = D3D11_USAGE_IMMUTABLE;
+    td.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+    D3D11_SUBRESOURCE_DATA init{kNLLogoRGBA, (UINT)kNLLogoRGBASize * 4, 0};
+    ID3D11Texture2D* tex = nullptr;
+    if (SUCCEEDED(s_dev->CreateTexture2D(&td, &init, &tex))) {
+        s_dev->CreateShaderResourceView(tex, nullptr, &s_logo_srv);
+        tex->Release();
+    }
+}
+
 static void upload_frame() {
     std::scoped_lock l(s_mx);
     if (!s_frame_new || s_frame_w <= 0) return;
@@ -588,6 +629,15 @@ static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         float u, v;
         if (mouse_on_video(hwnd, u, v)) { SetCursor(nullptr); return TRUE; }   // das Spiel zeigt seinen eigenen Zeiger
     }
+    if (msg == WM_CHAR && s_chat_skip_char) { s_chat_skip_char = false; return 0; }   // das 'y' der Oeffnen-Taste
+    if (msg == WM_KEYDOWN && s_screen == Screen::Playing && !s_overlay && !s_chat_open && wp == 'Y') {
+        s_chat_open = true;
+        s_chat_focus = true;
+        s_chat_skip_char = true;
+        s_chat_buf[0] = 0;
+        return 0;
+    }
+    if (msg == WM_KEYDOWN && s_chat_open && wp == VK_ESCAPE) { s_chat_open = false; return 0; }
     if (ImGui_ImplWin32_WndProcHandler(hwnd, msg, wp, lp)) return true;
     switch (msg) {
     case WM_SIZE:
@@ -691,10 +741,11 @@ static void ui_home(ImVec2 size, ImFont* big) {
     ImGui::Begin("##home", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings);
     ImDrawList* dl = ImGui::GetWindowDrawList();
     ImVec2 wp = ImGui::GetWindowPos();
-    logo(dl, ImVec2(wp.x + 50, wp.y + 52), 20);
+    if (s_logo_srv) dl->AddImage((ImTextureID)s_logo_srv, ImVec2(wp.x + 24, wp.y + 22), ImVec2(wp.x + 78, wp.y + 76));
+    else logo(dl, ImVec2(wp.x + 50, wp.y + 52), 20);
     ImGui::SetCursorPos(ImVec2(84, 30));
     ImGui::PushFont(big);
-    ImGui::TextColored(ImVec4(0.0f, 0.68f, 0.94f, 1), "Nintendo Land");
+    ImGui::TextColored(ImVec4(0.0f, 0.68f, 0.94f, 1), "NL Recomp");
     ImGui::SameLine();
     ImGui::TextUnformatted("|  Online mitspielen");
     ImGui::PopFont();
@@ -743,7 +794,7 @@ static void ui_home(ImVec2 size, ImFont* big) {
         ImGui::SetCursorScreenPos(ImVec2(p.x + 34, p.y + 6));
         ImGui::TextUnformatted(f.name.c_str());
         ImGui::SetCursorScreenPos(ImVec2(p.x + 34, p.y + 26));
-        ImGui::TextDisabled("%s", !f.code.empty() ? "hostet einen Raum" : f.in_nl ? "spielt Nintendo Land" : "online");
+        ImGui::TextDisabled("%s", !f.code.empty() ? "hostet einen Raum" : f.in_nl ? "spielt NL" : "online");
         if (!f.code.empty()) {
             ImGui::SetCursorScreenPos(ImVec2(p.x + ImGui::GetContentRegionAvail().x - 150, p.y + 6));
             if (accent_button("Beitreten", ImVec2(140, 36))) start_join(f.code);
@@ -753,7 +804,7 @@ static void ui_home(ImVec2 size, ImFont* big) {
         ImGui::PopID();
     }
     ImGui::EndChild();
-    ImGui::TextDisabled("Angemeldet als %s   |   F11: Vollbild   |   Esc im Spiel: Menue", nl_steam_my_name().c_str());
+    ImGui::TextDisabled("Angemeldet als %s   |   F11: Vollbild   |   Im Spiel: Esc Menue, Y Chat", nl_steam_my_name().c_str());
     ImGui::End();
 }
 
@@ -797,6 +848,45 @@ static void ui_playing(ImVec2 size, ImFont* big) {
         ImVec2 ts = ImGui::CalcTextSize(info.c_str());
         bg->AddRectFilled(ImVec2(12, 12), ImVec2(36 + ts.x, 24 + ts.y + 12), col(255, 255, 255, 170), 14);
         bg->AddText(ImVec2(24, 18), col(30, 40, 55), info.c_str());
+    }
+    // Chat oben links (unter der Info), verblasst nach ein paar Sekunden
+    {
+        std::vector<ChatLine> lines;
+        {
+            std::scoped_lock l(s_chat_mx);
+            const size_t n = std::min<size_t>(s_chat.size(), 8);
+            lines.assign(s_chat.end() - n, s_chat.end());
+        }
+        float y = 70;
+        for (auto& ln : lines) {
+            const float age = std::chrono::duration<float>(clk::now() - ln.t).count();
+            if (!s_chat_open && age > 10) continue;
+            const float a = (!s_chat_open && age > 8) ? 1.0f - (age - 8) / 2 : 1.0f;
+            const std::string name = ln.name.empty() ? "" : ln.name + ": ";
+            const ImVec2 sn = ImGui::CalcTextSize(name.c_str()), st = ImGui::CalcTextSize(ln.text.c_str());
+            bg->AddRectFilled(ImVec2(12, y), ImVec2(36 + sn.x + st.x, y + st.y + 12), col(255, 255, 255, (int)(215 * a)), 12);
+            if (!name.empty()) bg->AddText(ImVec2(24, y + 6), col(0, 174, 239, (int)(255 * a)), name.c_str());
+            bg->AddText(ImVec2(24 + sn.x, y + 6), ln.name.empty() ? col(90, 100, 115, (int)(255 * a)) : col(30, 40, 55, (int)(255 * a)), ln.text.c_str());
+            y += st.y + 18;
+        }
+    }
+    if (s_chat_open && !s_overlay) {
+        const float cw = std::min(760.0f, size.x - 40);
+        ImGui::SetNextWindowPos(ImVec2(20, size.y - 92));
+        ImGui::SetNextWindowSize(ImVec2(cw, 72));
+        ImGui::Begin("##chat", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings);
+        if (s_chat_focus) { ImGui::SetKeyboardFocusHere(); s_chat_focus = false; }
+        ImGui::SetNextItemWidth(-1);
+        if (ImGui::InputTextWithHint("##chatin", "Nachricht ... (Enter senden, Esc abbrechen)", s_chat_buf, sizeof(s_chat_buf),
+                                     ImGuiInputTextFlags_EnterReturnsTrue)) {
+            if (s_chat_buf[0] && s_host) {
+                Chat c;
+                strncpy(c.text, s_chat_buf, sizeof(c.text) - 1);
+                nl_net_send(s_host, CH_CONTROL, &c, sizeof(c), true);   // der Host schickt sie an alle zurueck
+            }
+            s_chat_open = false;
+        }
+        ImGui::End();
     }
     if (!s_overlay) return;
     const float pw = 520, ph = 400;
@@ -862,12 +952,13 @@ int main(int argc, char* argv[]) {
     wc.hCursor = LoadCursorW(nullptr, MAKEINTRESOURCEW(32512));
     wc.lpszClassName = L"NLOnline";
     RegisterClassExW(&wc);
-    HWND hwnd = CreateWindowW(wc.lpszClassName, L"Nintendo Land - Online", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 1280, 760,
+    HWND hwnd = CreateWindowW(wc.lpszClassName, L"NL Recomp - Online", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 1280, 760,
                               nullptr, nullptr, wc.hInstance, nullptr);
     if (!d3d_init(hwnd)) {
-        MessageBoxW(nullptr, L"Direct3D 11 konnte nicht gestartet werden.", L"Nintendo Land - Online", MB_ICONERROR);
+        MessageBoxW(nullptr, L"Direct3D 11 konnte nicht gestartet werden.", L"NL Recomp - Online", MB_ICONERROR);
         return 1;
     }
+    create_logo_texture();
     ShowWindow(hwnd, SW_SHOWDEFAULT);
     UpdateWindow(hwnd);
 

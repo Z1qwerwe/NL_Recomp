@@ -244,7 +244,7 @@ bool nl_steam_init() {
     U_SetGlobalInt(utils, CFG_SEND_RATE_MAX, 8 * 1024 * 1024);
     U_SetGlobalInt(utils, CFG_SEND_BUFFER, 8 * 1024 * 1024);
     F_SetRichPresence(s_friends, "nlr", "1");
-    F_SetRichPresence(s_friends, "status", "Nintendo Land Recomp");
+    F_SetRichPresence(s_friends, "status", "NL Recomp");
     nl_steam_friends();
     return true;
 }

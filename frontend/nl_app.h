@@ -153,3 +153,16 @@ void nl_online_kick(uint64_t id);
 void nl_online_invite(uint64_t friend_id);
 void nl_online_join(const std::string& code);   // startet NLOnline.exe mit dem Code
 std::string nl_online_encoder();          // Name des Video-Encoders
+
+// Chat (Taste Y, nur mit offenem Raum)
+struct NLChatLine { std::string name, text; uint64_t ms = 0; bool system = false; };
+extern bool g_nl_chat_open;
+bool nl_chat_available();
+void nl_chat_open();
+void nl_chat_close();
+void nl_chat_char(uint32_t ch);           // WM_CHAR
+void nl_chat_key(uint32_t vk);            // Enter / Esc / Ruecktaste
+std::string nl_chat_input();
+void nl_online_send_chat(const std::string& text);
+std::vector<NLChatLine> nl_online_chat_lines();   // die letzten 8
+uint64_t nl_online_now_ms();
