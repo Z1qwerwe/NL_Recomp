@@ -26,6 +26,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -72,6 +73,18 @@ static std::atomic<bool> s_sideways{true};
 static std::atomic<bool> s_overlay{false};   // Esc-Menue offen -> keine Eingaben ans Spiel
 
 static std::string s_code_buf;              // getippter Code
+static std::atomic<float> s_vid_x0{0}, s_vid_y0{0}, s_vid_x1{0}, s_vid_y1{0};   // Bild im Fenster (Pixel)
+
+// Mausposition auf dem gestreamten Bild (0..1), false wenn die Maus nicht drauf ist
+static bool mouse_on_video(HWND hwnd, float& u, float& v) {
+    POINT pt;
+    if (!GetCursorPos(&pt) || !ScreenToClient(hwnd, &pt)) return false;
+    const float x0 = s_vid_x0, y0 = s_vid_y0, x1 = s_vid_x1, y1 = s_vid_y1;
+    if (x1 <= x0 || y1 <= y0 || pt.x < x0 || pt.x >= x1 || pt.y < y0 || pt.y >= y1) return false;
+    u = (pt.x - x0) / (x1 - x0);
+    v = (pt.y - y0) / (y1 - y0);
+    return true;
+}
 static std::filesystem::path s_ini;
 
 // ===========================================================================
@@ -114,15 +127,36 @@ static bool audio_init() {
     wf.nBlockAlign = 4;
     wf.nAvgBytesPerSec = 48000 * 4;
     if (FAILED(s_xa->CreateSourceVoice(&s_voice, &wf))) return false;
-    s_voice->Start();
-    return true;
+    return true;   // gestartet wird erst, wenn genug im Puffer ist
 }
 
-static void audio_play(const uint8_t* pcm, size_t bytes) {
+// Jitter-Puffer: erst ab ~60 ms Vorrat abspielen; laeuft er leer, kurz neu puffern statt zu stottern.
+static constexpr UINT32 kAudioStart = 5;   // Pakete a 12 ms
+static constexpr UINT32 kAudioMax = 14;    // mehr -> Verzoegerung zu gross, Paket verwerfen
+static bool s_audio_started = false;
+static uint32_t s_audio_last_seq = 0;
+static std::atomic<uint32_t> s_audio_underruns{0};
+
+static void audio_reset() {
+    if (!s_voice) return;
+    s_voice->Stop();
+    s_voice->FlushSourceBuffers();
+    s_audio_started = false;
+    s_audio_last_seq = 0;
+}
+
+static void audio_play(uint32_t seq, const uint8_t* pcm, size_t bytes) {
     if (!s_voice || bytes == 0) return;
+    if (s_audio_last_seq && seq <= s_audio_last_seq && s_audio_last_seq - seq < 100000) return;   // alt/doppelt
+    s_audio_last_seq = seq;
     XAUDIO2_VOICE_STATE st{};
     s_voice->GetState(&st, XAUDIO2_VOICE_NOSAMPLESPLAYED);
-    if (st.BuffersQueued > 8) return;   // zu viel im Puffer -> verwerfen, damit die Verzoegerung klein bleibt
+    if (s_audio_started && st.BuffersQueued == 0) {   // leergelaufen -> neu puffern
+        s_voice->Stop();
+        s_audio_started = false;
+        s_audio_underruns++;
+    }
+    if (st.BuffersQueued >= kAudioMax) return;
     auto& buf = s_audio_pool[s_audio_next];
     s_audio_next = (s_audio_next + 1) % kAudioPool;
     buf.assign(pcm, pcm + bytes);
@@ -130,6 +164,10 @@ static void audio_play(const uint8_t* pcm, size_t bytes) {
     xb.AudioBytes = (UINT32)buf.size();
     xb.pAudioData = buf.data();
     s_voice->SubmitSourceBuffer(&xb);
+    if (!s_audio_started && st.BuffersQueued + 1 >= kAudioStart) {
+        s_voice->Start();
+        s_audio_started = true;
+    }
 }
 
 // ===========================================================================
@@ -169,6 +207,10 @@ static void net_loop() {
     clk::time_point last_hello{}, connect_start{}, last_ping{}, last_input{}, last_key_req{};
     uint32_t input_seq = 0;
     Screen prev = Screen::Home;
+    struct Partial { std::vector<uint8_t> data; std::vector<bool> have; uint16_t got = 0; bool key = false; uint64_t t = 0; };
+    std::map<uint32_t, Partial> partial;
+    uint32_t stat_ok = 0, stat_lost = 0, last_underruns = 0;
+    clk::time_point last_stats{};
 
     while (!s_quit) {
         nl_steam_tick();
@@ -179,7 +221,9 @@ static void net_loop() {
                 last_hello = {};
                 need_key = true;
                 last_frame = 0;
+                partial.clear();
                 decoder.reset();
+                audio_reset();
             }
             prev = scr;
         }
@@ -265,19 +309,42 @@ static void net_loop() {
             if (from != host || n <= sizeof(VideoHeader) || s_screen != Screen::Playing) return;
             VideoHeader hdr;
             memcpy(&hdr, d, sizeof(hdr));
-            const bool gap = last_frame != 0 && hdr.frame != last_frame + 1;
+            if (hdr.count == 0 || hdr.index >= hdr.count || hdr.total > 8 * 1024 * 1024) return;
+            if (last_frame && hdr.frame <= last_frame && last_frame - hdr.frame < 1000000) return;   // zu spaet
+            Partial& p = partial[hdr.frame];
+            if (p.have.empty()) {
+                p.data.resize(hdr.total);
+                p.have.assign(hdr.count, false);
+                p.key = hdr.keyframe != 0;
+                p.t = hdr.t_host_us;
+            }
+            if (p.have.size() != hdr.count || p.have[hdr.index]) return;
+            const size_t off = (size_t)hdr.index * kChunk, len = n - sizeof(hdr);
+            if (off + len > p.data.size()) return;
+            memcpy(p.data.data() + off, d + sizeof(hdr), len);
+            p.have[hdr.index] = true;
+            if (++p.got < hdr.count) {
+                while (partial.size() > 40) partial.erase(partial.begin());   // Reste verlorener Bilder
+                return;
+            }
+            // Bild komplett: alles davor, was nicht fertig wurde, ist verloren
+            const uint32_t lost = last_frame ? hdr.frame - last_frame - 1 : 0;
+            stat_lost += lost;
+            stat_ok++;
             last_frame = hdr.frame;
-            if (gap) need_key = true;
-            if (need_key && !hdr.keyframe) {
+            Partial done = std::move(p);
+            partial.erase(partial.begin(), partial.upper_bound(hdr.frame));
+            if (lost) need_key = true;
+            if (need_key && !done.key) {
                 if (clk::now() - last_key_req > std::chrono::milliseconds(300)) {
                     last_key_req = clk::now();
                     send_simple(MSG_KEYFRAME);
                 }
                 return;
             }
-            if (hdr.keyframe) need_key = false;
+            if (done.key) need_key = false;
             int w = 0, h = 0;
-            if (decoder.decode(d + sizeof(hdr), n - sizeof(hdr), hdr.t_host_us, bgra, w, h)) {
+            if (decoder.decode(done.data.data(), done.data.size(), done.t, bgra, w, h)) {
                 std::scoped_lock l(s_mx);
                 s_frame.swap(bgra);
                 s_frame_w = w;
@@ -288,7 +355,9 @@ static void net_loop() {
 
         nl_net_receive(CH_AUDIO, [&](uint64_t from, const uint8_t* d, size_t n) {
             if (from != host || n <= sizeof(AudioHeader) || s_screen != Screen::Playing) return;
-            audio_play(d + sizeof(AudioHeader), n - sizeof(AudioHeader));
+            AudioHeader ah;
+            memcpy(&ah, d, sizeof(ah));
+            audio_play(ah.seq, d + sizeof(AudioHeader), n - sizeof(AudioHeader));
         });
 
         if (s_screen == Screen::Playing && host) {
@@ -301,8 +370,19 @@ static void net_loop() {
                 }
                 if (s_overlay) in = Input{};
                 in.seq = ++input_seq;
-                in.flags = s_sideways ? IN_SIDEWAYS : 0;
+                in.flags = (uint8_t)((in.flags & IN_POINTER) | (s_sideways ? IN_SIDEWAYS : 0));
                 nl_net_send(host, CH_INPUT, &in, sizeof(in), false);
+            }
+            if (clk::now() - last_stats > std::chrono::seconds(1)) {
+                last_stats = clk::now();
+                Stats st;
+                st.frames_ok = stat_ok;
+                st.frames_lost = stat_lost;
+                const uint32_t ur = s_audio_underruns;
+                st.audio_underruns = ur - last_underruns;
+                last_underruns = ur;
+                stat_ok = stat_lost = 0;
+                nl_net_send(host, CH_CONTROL, &st, sizeof(st), false);
             }
             if (clk::now() - last_ping > std::chrono::seconds(1)) {
                 last_ping = clk::now();
@@ -398,6 +478,15 @@ static void poll_input(HWND hwnd) {
         if (k('D')) in.lx = 32767;
         if (k(VK_SHIFT)) in.lt = 255;        // Z
         if (k(VK_CONTROL)) in.rt = 255;      // B
+        // Maus als Wiimote-Zeiger: Linksklick = A, Rechtsklick = B
+        float u, v;
+        if (s_screen == Screen::Playing && !s_overlay && mouse_on_video(hwnd, u, v)) {
+            in.flags |= IN_POINTER;
+            in.px = (uint16_t)std::clamp((int)(u * 65535), 0, 65535);
+            in.py = (uint16_t)std::clamp((int)(v * 65535), 0, 65535);
+            btn(0, k(VK_LBUTTON));
+            btn(2, k(VK_RBUTTON));
+        }
     }
     std::scoped_lock l(s_in_mx);
     s_input = in;
@@ -495,6 +584,10 @@ static void toggle_fullscreen(HWND hwnd) {
 }
 
 static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    if (msg == WM_SETCURSOR && LOWORD(lp) == HTCLIENT && s_screen == Screen::Playing && !s_overlay) {
+        float u, v;
+        if (mouse_on_video(hwnd, u, v)) { SetCursor(nullptr); return TRUE; }   // das Spiel zeigt seinen eigenen Zeiger
+    }
     if (ImGui_ImplWin32_WndProcHandler(hwnd, msg, wp, lp)) return true;
     switch (msg) {
     case WM_SIZE:
@@ -691,6 +784,7 @@ static void ui_playing(ImVec2 size, ImFont* big) {
         float w = s_tex_w * scale, h = s_tex_h * scale;
         ImVec2 p0((size.x - w) / 2, (size.y - h) / 2);
         bg->AddImage((ImTextureID)s_srv, p0, ImVec2(p0.x + w, p0.y + h));
+        s_vid_x0 = p0.x; s_vid_y0 = p0.y; s_vid_x1 = p0.x + w; s_vid_y1 = p0.y + h;
     } else {
         const char* t = "Warte auf das Bild ...";
         ImVec2 ts = ImGui::CalcTextSize(t);
@@ -820,6 +914,8 @@ int main(int argc, char* argv[]) {
         poll_input(hwnd);
         upload_frame();
 
+        if (s_screen == Screen::Playing && !s_overlay) io.ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
+        else io.ConfigFlags &= ~ImGuiConfigFlags_NoMouseCursorChange;
         ImGui_ImplDX11_NewFrame();
         ImGui_ImplWin32_NewFrame();
         ImGui::NewFrame();

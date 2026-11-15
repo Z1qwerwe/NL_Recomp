@@ -79,18 +79,49 @@ void on_frame(const uint8* rgba, int w, int h, int stride, bool srgb) {
     s_encoder.submit_rgba(rgba, w, h, w * 4, srgb);
 }
 
+// Ein Bild in Stuecke <= kChunk teilen: grosse unzuverlaessige Nachrichten gehen sonst ganz verloren,
+// sobald ein einziges UDP-Paket fehlt.
 void on_packet(const uint8_t* data, size_t size, bool key, uint64_t) {
-    std::vector<uint8_t> msg(sizeof(VideoHeader) + size);
     VideoHeader hdr;
     hdr.frame = ++s_frame_no;
+    hdr.count = (uint16_t)((size + kChunk - 1) / kChunk);
+    hdr.total = (uint32_t)size;
     hdr.keyframe = key ? 1 : 0;
     hdr.width = (uint16_t)s_encoder.width();
     hdr.height = (uint16_t)s_encoder.height();
     hdr.t_host_us = now_us();
-    memcpy(msg.data(), &hdr, sizeof(hdr));
-    memcpy(msg.data() + sizeof(hdr), data, size);
+    uint8_t msg[sizeof(VideoHeader) + kChunk];
     std::scoped_lock l(s_peer_mx);
-    for (uint64_t id : s_peers) nl_net_send(id, CH_VIDEO, msg.data(), msg.size(), false);
+    for (uint16_t i = 0; i < hdr.count; i++) {
+        const size_t off = (size_t)i * kChunk, n = std::min<size_t>(kChunk, size - off);
+        hdr.index = i;
+        memcpy(msg, &hdr, sizeof(hdr));
+        memcpy(msg + sizeof(hdr), data + off, n);
+        for (uint64_t id : s_peers) nl_net_send(id, CH_VIDEO, msg, sizeof(hdr) + n, false);
+    }
+}
+
+// Bitrate an die schlechteste Verbindung anpassen
+int s_kbps_max = 6000, s_kbps_now = 6000;
+clk::time_point s_last_down{}, s_last_up{};
+void adapt_bitrate_locked(const Stats& st) {
+    const uint32_t total = st.frames_ok + st.frames_lost;
+    if (total < 10 || !s_encoder.running()) return;
+    const float loss = (float)st.frames_lost / total;
+    const auto now = clk::now();
+    int k = s_kbps_now;
+    if (loss > 0.04f && now - s_last_down > std::chrono::seconds(1)) {
+        k = std::max(1500, (int)(k * 0.7f));
+        s_last_down = now;
+    } else if (loss < 0.01f && now - s_last_down > std::chrono::seconds(6) && now - s_last_up > std::chrono::seconds(3)) {
+        k = std::min(s_kbps_max, (int)(k * 1.15f));
+        s_last_up = now;
+    }
+    if (k != s_kbps_now) {
+        s_kbps_now = k;
+        s_encoder.set_bitrate(k);
+        cemuLog_log(LogType::Force, "Online: Bitrate {} kbit/s (Verlust {:.0f}%)", k, loss * 100);
+    }
 }
 
 void on_audio(const sint16* samples, int frames, int channels) {
@@ -144,6 +175,7 @@ bool ensure_encoder_locked() {
     g_nl_stream_w = q.w;
     g_nl_stream_h = q.h;
     g_nl_stream_fps = q.fps;
+    s_kbps_max = s_kbps_now = q.kbps;
     if (!s_encoder.start(q.w, q.h, q.fps, q.kbps, on_packet)) {
         set_status("Video-Encoder konnte nicht starten.");
         return false;
@@ -243,6 +275,9 @@ void net_loop() {
                     s_encoder.request_keyframe();
                 }
                 break;
+            case MSG_STATS:
+                if (n >= sizeof(Stats)) { Stats st; memcpy(&st, d, sizeof(st)); adapt_bitrate_locked(st); }
+                break;
             case MSG_PING:
                 if (n >= sizeof(Ping)) {
                     Ping p;
@@ -270,6 +305,9 @@ void net_loop() {
             w.rx = in.rx / 32767.0f; w.ry = in.ry / 32767.0f;
             w.lt = in.lt / 255.0f; w.rt = in.rt / 255.0f;
             w.sideways = (in.flags & IN_SIDEWAYS) != 0;
+            w.has_ptr = (in.flags & IN_POINTER) != 0;
+            w.px = in.px / 65535.0f;
+            w.py = in.py / 65535.0f;
             w.connected = true;
             std::scoped_lock li(s_in_mx);
             s_inputs[from] = w;

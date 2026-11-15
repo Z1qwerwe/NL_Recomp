@@ -20,6 +20,8 @@ public:
     // RGBA-Bild abgeben (wird kopiert; aeltere, noch nicht kodierte Bilder werden verworfen)
     void submit_rgba(const uint8_t* rgba, int width, int height, int stride, bool srgb_encode);
     void request_keyframe() { m_want_key = true; }
+    void set_bitrate(int kbps) { m_new_kbps = kbps; }   // live, ohne Neustart
+    int bitrate() const { return m_kbps; }
     std::string encoder_name() const;
     int width() const { return m_w; }
     int height() const { return m_h; }
@@ -30,6 +32,7 @@ private:
     bool m_running = false;
     std::atomic<bool> m_stop{false};
     std::atomic<bool> m_want_key{true};
+    std::atomic<int> m_new_kbps{0};
     std::thread m_thread;
     PacketFn m_on_packet;
     int m_w = 0, m_h = 0, m_fps = 60, m_kbps = 8000;

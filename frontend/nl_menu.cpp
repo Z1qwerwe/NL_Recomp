@@ -4,6 +4,8 @@
 // Unterbau, siehe nl_menu_install). Bedienbar mit Maus, Tastatur und Controller.
 #include "nl_app.h"
 #include "net/nl_steam.h"
+#include "nl_logo_rgb.h"
+#include "Cafe/HW/Latte/Renderer/Renderer.h"
 
 #include "WindowSystem.h"
 #include "Cafe/HW/Latte/Core/Latte.h"
@@ -740,17 +742,26 @@ static void render_menu(int w, int h) {
     dl->AddRect(ImVec2(p0.x - 1 * u, p0.y - 1 * u), ImVec2(p1.x + 1 * u, p1.y + 1 * u), C_EDGE, 29 * u, 0, 1.0f * u);
 
     const float pad = 36 * u;
-    // kleines rundes Logo wie das Mii-Bild oben links im Wii-U-Menue
+    // Logo in einem weissen runden Feld wie das Mii-Bild oben links im Wii-U-Menue
     {
-        ImVec2 lc(p0.x + pad + 20 * u, p0.y + 50 * u);
-        const ImU32 ring[] = {col(230, 60, 60), col(250, 150, 40), col(250, 215, 50), col(80, 190, 90), col(60, 150, 230), col(150, 90, 210)};
-        for (int i = 0; i < 6; i++)
-            dl->PathArcTo(lc, 19 * u, -1.5708f + i * 1.0472f, -1.5708f + (i + 1) * 1.0472f, 8), dl->PathLineTo(lc), dl->PathFillConvex(ring[i]);
-        dl->AddCircleFilled(lc, 11 * u, col(255, 255, 255), 24);
+        static ImTextureID s_logo = nullptr;
+        static bool s_logo_tried = false;
+        if (!s_logo_tried && g_renderer) {   // einmal hochladen (geht nur waehrend gezeichnet wird)
+            s_logo_tried = true;
+            std::vector<uint8> rgb(kNLLogoRGB, kNLLogoRGB + sizeof(kNLLogoRGB));
+            s_logo = g_renderer->GenerateTexture(rgb, {kNLLogoSize, kNLLogoSize});
+        }
+        const ImVec2 lc(p0.x + pad + 24 * u, p0.y + 52 * u);
+        const float lr = 26 * u;
+        dl->AddCircleFilled(ImVec2(lc.x, lc.y + 2 * u), lr + 2 * u, col(40, 60, 90, 30), 32);
+        dl->AddCircleFilled(lc, lr, col(255, 255, 255), 32);
+        if (s_logo)
+            dl->AddImageRounded(s_logo, ImVec2(lc.x - lr, lc.y - lr), ImVec2(lc.x + lr, lc.y + lr), ImVec2(0, 0), ImVec2(1, 1), col(255, 255, 255), lr);
+        dl->AddCircle(lc, lr, C_EDGE, 32, 1.5f * u);
     }
-    const float title_x = p0.x + pad + 50 * u;
-    text_at(dl, f_big, fs_big, ImVec2(title_x, p0.y + 32 * u), C_ACCENT, "Nintendo Land");
-    float tx = title_x + measure(f_big, fs_big, "Nintendo Land").x + 14 * u;
+    const float title_x = p0.x + pad + 62 * u;
+    text_at(dl, f_big, fs_big, ImVec2(title_x, p0.y + 32 * u), C_ACCENT, "NL Recomp");
+    float tx = title_x + measure(f_big, fs_big, "NL Recomp").x + 14 * u;
     text_at(dl, f_big, fs_big, ImVec2(tx, p0.y + 32 * u), C_TEXT, "|  Einstellungen");
     std::string ver = "NL Recomp 0.2";
     text_at(dl, f_small, fs_small, ImVec2(p1.x - pad - measure(f_small, fs_small, ver).x, p0.y + 42 * u), C_DIM, ver);

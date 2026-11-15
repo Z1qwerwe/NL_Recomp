@@ -141,7 +141,7 @@ static bool configure_encoder(EncState& st, int w, int h, int fps, int kbps) {
         codec_set_bool(st.api, CODECAPI_AVLowLatencyMode, true);
         codec_set_u4(st.api, CODECAPI_AVEncCommonRateControlMode, eAVEncCommonRateControlMode_CBR);
         codec_set_u4(st.api, CODECAPI_AVEncCommonMeanBitRate, (ULONG)kbps * 1000);
-        codec_set_u4(st.api, CODECAPI_AVEncMPVGOPSize, (ULONG)fps * 2);
+        codec_set_u4(st.api, CODECAPI_AVEncMPVGOPSize, (ULONG)fps);   // jede Sekunde ein Keyframe: Fehler heilen schnell
         codec_set_u4(st.api, CODECAPI_AVEncMPVDefaultBPictureCount, 0);
     }
 
@@ -359,6 +359,10 @@ void NLVideoEncoder::worker() {
         s->SetSampleTime((LONGLONG)(now_us() - t0) * 10);
         s->SetSampleDuration(frame_dur);
         if (m_want_key.exchange(false)) codec_set_u4(st.api, CODECAPI_AVEncVideoForceKeyFrame, 1);
+        if (int k = m_new_kbps.exchange(0)) {
+            m_kbps = k;
+            codec_set_u4(st.api, CODECAPI_AVEncCommonMeanBitRate, (ULONG)k * 1000);
+        }
         HRESULT hr = st.mft->ProcessInput(st.in_id, s, 0);
         s->Release();
         if (SUCCEEDED(hr)) fed++;

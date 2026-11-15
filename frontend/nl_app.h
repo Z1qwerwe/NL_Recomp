@@ -123,6 +123,8 @@ struct NLWiiIn {
     float lx = 0, ly = 0, rx = 0, ry = 0; // -1..1, y nach unten positiv (wie SDL)
     float lt = 0, rt = 0;                 // 0..1
     bool sideways = true;                 // Wiimote quer halten
+    bool has_ptr = false;                 // Zeiger direkt gesetzt (Maus des Gastes), 0..1
+    float px = 0.5f, py = 0.5f;
     bool connected = true;
 };
 using NLWiiSource = std::function<NLWiiIn()>;

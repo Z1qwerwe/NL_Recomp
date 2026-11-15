@@ -82,6 +82,10 @@ public:
         auto dz = [](float v) { return std::abs(v) < 0.18f ? 0.0f : v; };
         std::scoped_lock l(m_mx);
         m_prev = m_ptr;
+        if (in.has_ptr) {   // Maus des Online-Gastes: Position direkt uebernehmen
+            m_ptr = {std::clamp(in.px, 0.0f, 1.0f), std::clamp(in.py, 0.0f, 1.0f)};
+            return out;
+        }
         if (b(B_RSTICK)) m_ptr = {0.5f, 0.5f};
         m_ptr.x = std::clamp(m_ptr.x + dz(in.rx) * 0.9f * dt, 0.0f, 1.0f);
         m_ptr.y = std::clamp(m_ptr.y + dz(in.ry) * 0.9f * dt, 0.0f, 1.0f);

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Nintendo Land Recomp Launcher.
+"""NL Recomp Launcher.
 
 Start:  python launcher.py           (GUI)
         python launcher.py --cli     (alle Schritte ohne GUI, nutzt settings.json)
@@ -51,7 +51,15 @@ def run_gui():
     state = {"busy": False, "stop": False, "game": None}
 
     root = tk.Tk()
-    root.title("Nintendo Land Recomp")
+    root.title("NL Recomp")
+    assets = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
+    try:
+        if os.name == "nt" and os.path.isfile(os.path.join(assets, "nl_icon.ico")):
+            root.iconbitmap(os.path.join(assets, "nl_icon.ico"))
+        else:
+            root.iconphoto(True, tk.PhotoImage(file=os.path.join(assets, "icon_256.png")))
+    except Exception:
+        pass
     root.geometry("980x700")
     root.minsize(820, 600)
     root.configure(bg=BG)
@@ -155,13 +163,15 @@ def run_gui():
     logo = tk.Canvas(head, width=64, height=64, bg=BG, highlightthickness=0)
     logo.pack(side="left")
     _round_rect(logo, 2, 2, 62, 62, 18, fill=CARD, outline=EDGE, width=1.5)
-    for i, colr in enumerate(RING):
-        logo.create_arc(10, 10, 54, 54, start=90 - i * 60, extent=-60, fill=colr, outline=colr)
-    logo.create_oval(21, 21, 43, 43, fill="white", outline="white")
-    logo.create_text(32, 32, text="NL", fill=FG, font=("Segoe UI Black", 9))
+    try:   # neues Logo (assets/icon_256.png, 256 -> 64 Pixel)
+        logo_img = tk.PhotoImage(file=os.path.join(assets, "icon_256.png")).subsample(5, 5)
+        logo.create_image(32, 32, image=logo_img)
+        logo.image = logo_img   # Referenz halten, sonst raeumt Tk das Bild weg
+    except Exception:
+        logo.create_text(32, 32, text="NL", fill=FG, font=("Segoe UI Black", 14))
     titles = tk.Frame(head, bg=BG)
     titles.pack(side="left", padx=14)
-    title_var = tk.StringVar(value="Nintendo Land Recomp")
+    title_var = tk.StringVar(value="NL Recomp")
     sub_var = tk.StringVar(value="Waehl deinen entpackten Spielordner aus")
     tk.Label(titles, textvariable=title_var, bg=BG, fg=FG, font=("Segoe UI Semibold", 22)).pack(anchor="w")
     tk.Label(titles, textvariable=sub_var, bg=BG, fg=MUTED, font=("Segoe UI", 10)).pack(anchor="w")
@@ -268,9 +278,10 @@ def run_gui():
         try:
             g = pipeline.step_detect(settings, log)
             state["game"] = g
-            title_var.set(g.base.name or "Unbekanntes Spiel")
+            title_var.set("NL Recomp")
             ver = g.update.version if g.update and g.update.kind == "decrypted" else g.base.version
-            sub_var.set(f"{g.base.title_id}  |  v{ver}  |  "
+            sub_var.set(f"{'NL' if 'nintendo land' in (g.base.name or '').lower() else (g.base.name or 'Unbekanntes Spiel')}"
+                        f"  |  {g.base.title_id}  |  v{ver}  |  "
                         + ("bereit" if g.rpx else "nicht entpackt"))
         except Exception as e:
             log(f"FEHLER: {e}")

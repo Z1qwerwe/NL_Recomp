@@ -54,7 +54,8 @@ struct CallCompleted { uint64_t call; int32_t id; uint32_t size; };
 
 constexpr int CB_LOBBY_JOIN_REQUESTED = 333, CB_RICH_JOIN_REQUESTED = 337;
 constexpr int CB_SESSION_REQUEST = 1251, CB_CALL_COMPLETED = 703;
-constexpr int SEND_UNRELIABLE = 0, SEND_RELIABLE = 8, SEND_AUTORESTART = 32;
+constexpr int SEND_UNRELIABLE = 0, SEND_NO_NAGLE = 1, SEND_RELIABLE = 8, SEND_AUTORESTART = 32;
+constexpr int CFG_SEND_BUFFER = 9, CFG_SEND_RATE_MIN = 10, CFG_SEND_RATE_MAX = 11;
 constexpr int FRIEND_IMMEDIATE = 4, LOBBY_PUBLIC = 2, CMP_EQUAL = 0, DIST_WORLDWIDE = 3, STATE_CONNECTED = 3;
 
 // Funktionszeiger
@@ -102,6 +103,7 @@ NLF(bool, N_Accept, void*, const Ident*);
 NLF(bool, N_Close, void*, const Ident*);
 NLF(int, N_SessionInfo, void*, const Ident*, void*, void*);
 NLF(void, U_InitRelay, void*);
+NLF(bool, U_SetGlobalInt, void*, int, int32_t);
 NLF(void, Msg_Release, NetMsg*);
 NLF(void, Id_SetSteamID64, Ident*, uint64_t);
 NLF(uint64_t, Id_GetSteamID64, Ident*);
@@ -165,6 +167,7 @@ bool load_dll() {
     ok &= load(N_Close, {"SteamAPI_ISteamNetworkingMessages_CloseSessionWithUser"});
     ok &= load(N_SessionInfo, {"SteamAPI_ISteamNetworkingMessages_GetSessionConnectionInfo"});
     ok &= load(U_InitRelay, {"SteamAPI_ISteamNetworkingUtils_InitRelayNetworkAccess"});
+    ok &= load(U_SetGlobalInt, {"SteamAPI_ISteamNetworkingUtils_SetGlobalConfigValueInt32"});
     ok &= load(Msg_Release, {"SteamAPI_SteamNetworkingMessage_t_Release"});
     ok &= load(Id_SetSteamID64, {"SteamAPI_SteamNetworkingIdentity_SetSteamID64"});
     ok &= load(Id_GetSteamID64, {"SteamAPI_SteamNetworkingIdentity_GetSteamID64"});
@@ -233,7 +236,13 @@ bool nl_steam_init() {
     s_msgs = A_Messages();
     if (!s_friends || !s_user || !s_mm || !s_msgs) { Shutdown(); return false; }
     s_ok = true;
-    U_InitRelay(A_Utils());
+    void* utils = A_Utils();
+    U_InitRelay(utils);
+    // Standard ist nur 256 KB/s (~2 Mbit/s) und 512 KB Puffer - viel zu wenig fuer Bild + Ton.
+    // Das liess den Stream nach ein paar Sekunden einfrieren.
+    U_SetGlobalInt(utils, CFG_SEND_RATE_MIN, 512 * 1024);
+    U_SetGlobalInt(utils, CFG_SEND_RATE_MAX, 8 * 1024 * 1024);
+    U_SetGlobalInt(utils, CFG_SEND_BUFFER, 8 * 1024 * 1024);
     F_SetRichPresence(s_friends, "nlr", "1");
     F_SetRichPresence(s_friends, "status", "Nintendo Land Recomp");
     nl_steam_friends();
@@ -423,7 +432,7 @@ void nl_steam_set_status(const std::string& text) {
 bool nl_net_send(uint64_t to, int channel, const void* data, size_t size, bool reliable) {
     if (!s_ok) return false;
     Ident id = ident(to);
-    int flags = (reliable ? SEND_RELIABLE : SEND_UNRELIABLE) | SEND_AUTORESTART;
+    int flags = (reliable ? SEND_RELIABLE : SEND_UNRELIABLE) | SEND_NO_NAGLE | SEND_AUTORESTART;
     return N_Send(s_msgs, &id, data, (uint32_t)size, flags, channel) == 1 /*k_EResultOK*/;
 }
 

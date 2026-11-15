@@ -8,7 +8,8 @@
 
 namespace nlnet {
 
-constexpr uint32_t kVersion = 1;
+constexpr uint32_t kVersion = 2;
+constexpr int kChunk = 1100;   // Nutzdaten pro Video-Stueck (passt in ein UDP-Paket)
 constexpr int kMaxRemote = 4;   // Wiimote 1-4
 
 // Kanaele (ISteamNetworkingMessages)
@@ -28,6 +29,8 @@ enum MsgType : uint8_t {
     MSG_PING = 6,       // Client -> Host
     MSG_PONG = 7,       // Host -> Client
     MSG_KICK = 8,       // Host -> Client
+    MSG_STATS = 9,      // Client -> Host: Empfangsstatistik (fuer die Bitrate)
+    MSG_CHAT = 10,      // beide Richtungen: Chatnachricht (Host verteilt an alle)
 };
 
 #pragma pack(push, 1)
@@ -61,12 +64,29 @@ struct Ping {
     uint64_t t_client_us = 0;
 };
 
-// Kopf jedes Video-Pakets, danach H.264 (Annex B)
+// Kopf jedes Video-Stuecks, danach bis zu kChunk Byte H.264 (Annex B).
+// Ein Bild wird in 'count' Stuecke geteilt; der Client setzt sie wieder zusammen.
 struct VideoHeader {
     uint32_t frame = 0;       // laufende Nummer
+    uint16_t index = 0;       // Stueck-Nummer
+    uint16_t count = 1;       // Stuecke in diesem Bild
+    uint32_t total = 0;       // Bytes im ganzen Bild
     uint8_t keyframe = 0;
     uint16_t width = 0, height = 0;
     uint64_t t_host_us = 0;
+};
+
+struct Stats {
+    uint8_t type = MSG_STATS;
+    uint32_t frames_ok = 0;     // seit der letzten Meldung komplett empfangen
+    uint32_t frames_lost = 0;   // seit der letzten Meldung verloren
+    uint32_t audio_underruns = 0;
+};
+
+struct Chat {
+    uint8_t type = MSG_CHAT;
+    char name[48] = {};
+    char text[200] = {};
 };
 
 // Kopf jedes Ton-Pakets, danach int16 stereo, 48 kHz
@@ -83,10 +103,11 @@ struct Input {
     uint32_t buttons = 0;
     int16_t lx = 0, ly = 0, rx = 0, ry = 0;   // SDL-Konvention: y nach unten positiv
     uint8_t lt = 0, rt = 0;                   // 0..255
-    uint8_t flags = 0;                        // Bit 0: Wiimote quer halten
+    uint8_t flags = 0;                        // Bit 0: Wiimote quer halten, Bit 1: Zeiger gueltig
+    uint16_t px = 0, py = 0;                  // Zeiger auf dem Bild, 0..65535
 };
 #pragma pack(pop)
 
-enum InputFlags : uint8_t { IN_SIDEWAYS = 1 };
+enum InputFlags : uint8_t { IN_SIDEWAYS = 1, IN_POINTER = 2 };
 
 }  // namespace nlnet
