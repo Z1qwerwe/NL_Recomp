@@ -290,6 +290,7 @@ struct Slot {
     std::shared_ptr<NLWiiPad> pad;
     std::shared_ptr<ControllerBase> native;   // echte Wiimote (Bluetooth)
     WPADDeviceType type = kWAPDevCore;
+    std::chrono::steady_clock::time_point lost{};   // echte Wiimote: seit wann nicht verbunden
 };
 std::mutex s_mx;
 Slot s_slots[5];   // 1-4 benutzt
@@ -381,6 +382,18 @@ void nl_wii_update_motion_mode() {
     if (++s_tick % 20 != 0) return;
     for (int i = 1; i <= 4; i++) {
         Slot& sl = s_slots[i];
+#if HAS_WIIMOTE
+        if (sl.used && sl.native) {
+            auto n = std::static_pointer_cast<NativeWiimoteController>(sl.native);
+            const ControllerState st = n->raw_state();
+            const glm::vec2 p = n->get_position();
+            cemuLog_log(LogType::Force, "NL: Wiimote {} (echt) verbunden {} | Knoepfe {} | Zeiger {:.2f}/{:.2f} {} | Nunchuk {} MotionPlus {}", i,
+                        n->is_connected() ? "ja" : "nein", st.buttons.GetButtonList().size(), p.x, p.y,
+                        n->GetPositionVisibility() != PositionVisibility::NONE ? "Sensorleiste gesehen" : "keine Sensorleiste",
+                        n->get_extension() == NativeWiimoteController::Nunchuck ? "ja" : "nein", n->is_mpls_attached() ? "ja" : "nein");
+            continue;
+        }
+#endif
         if (!sl.used || !sl.pad) continue;
         const glm::vec2 p = sl.pad->get_position();
         const auto st = sl.pad->status();
@@ -429,10 +442,22 @@ void nl_wii_update_native() {
         Slot& sl = s_slots[i];
         if (!sl.used || !sl.native) continue;
         if (!sl.native->is_connected()) {
-            cemuLog_log(LogType::Force, "NL: echte Wiimote {} getrennt", i);
-            InputManager::instance().delete_controller(i);
-            sl = {};
+            // Bluetooth setzt gern kurz aus: erst nach 8 s wirklich abmelden, sonst bleibt der Platz reserviert
+            const auto now = std::chrono::steady_clock::now();
+            if (sl.lost == std::chrono::steady_clock::time_point{}) {
+                sl.lost = now;
+                cemuLog_log(LogType::Force, "NL: echte Wiimote {} antwortet nicht (Bluetooth?) - warte ...", i);
+            }
+            if (now - sl.lost > std::chrono::seconds(8)) {
+                cemuLog_log(LogType::Force, "NL: echte Wiimote {} getrennt", i);
+                InputManager::instance().delete_controller(i);
+                sl = {};
+            }
             continue;
+        }
+        if (sl.lost != std::chrono::steady_clock::time_point{}) {
+            sl.lost = {};
+            cemuLog_log(LogType::Force, "NL: echte Wiimote {} wieder da", i);
         }
         const WPADDeviceType t = native_type(sl.native);
         if (t != sl.type) {

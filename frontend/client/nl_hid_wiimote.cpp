@@ -8,6 +8,7 @@
 
 #include <windows.h>
 #include <setupapi.h>
+#include <tlhelp32.h>
 #include <hidsdi.h>
 
 #include <algorithm>
@@ -404,6 +405,20 @@ private:
 
 std::mutex s_mx;
 std::vector<std::unique_ptr<Device>> s_devs;
+std::atomic<bool> s_game_here{false};
+
+// Laeuft NL Recomp (NintendoLand.exe) auf diesem PC? Dann gehoeren die Wiimotes dem Spiel - zwei Programme an
+// derselben Wiimote stehlen sich gegenseitig die Daten (Knoepfe fehlen, Zeiger flackert, Verbindung bricht ab).
+bool game_running() {
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snap == INVALID_HANDLE_VALUE) return false;
+    PROCESSENTRY32W pe{sizeof(pe)};
+    bool found = false;
+    for (BOOL ok = Process32FirstW(snap, &pe); ok && !found; ok = Process32NextW(snap, &pe))
+        found = _wcsicmp(pe.szExeFile, L"NintendoLand.exe") == 0;
+    CloseHandle(snap);
+    return found;
+}
 std::thread s_scan;
 std::atomic<bool> s_quit{false};
 
@@ -446,6 +461,17 @@ void scan_loop() {
                 }
             }
             dead.clear();   // Threads ausserhalb der Sperre beenden
+        }
+        s_game_here = game_running();
+        if (s_game_here) {   // Spiel laeuft hier: alle Wiimotes freigeben
+            std::vector<std::unique_ptr<Device>> all;
+            {
+                std::scoped_lock l(s_mx);
+                all.swap(s_devs);
+            }
+            all.clear();
+            for (int i = 0; i < 20 && !s_quit; i++) std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            continue;
         }
         for (auto& path : enumerate_wiimotes()) {
             std::scoped_lock l(s_mx);
@@ -515,6 +541,8 @@ void nl_hidwii_rumble(int index, bool on) {
         if (i++ == index) d->set_rumble(on);
     }
 }
+
+bool nl_hidwii_game_here() { return s_game_here; }
 
 void nl_hidwii_set_mpls_signs(int pitch, int yaw, int roll) {
     s_sign_pitch = pitch < 0 ? -1 : 1;

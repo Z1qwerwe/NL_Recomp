@@ -527,7 +527,11 @@ bool nlin_ui(ImFont* big) {
         std::scoped_lock l(s_mx);
         if (ImGui::Checkbox("Echte Wiimote benutzen, wenn eine verbunden ist", &s_use_wiimote)) changed = true;
     }
-    if (list.empty()) {
+    if (nl_hidwii_game_here()) {
+        ImGui::TextColored(bad, "NL Recomp laeuft auf diesem PC - echte Wiimotes gehoeren dann dem Spiel.");
+        ImGui::TextWrapped("Zwei Programme koennen nicht gleichzeitig dieselbe Wiimote benutzen. Zum Testen auf einem PC: "
+                           "Wiimote im Spiel benutzen (sie ist dort automatisch ein Spieler), hier Maus/Controller.");
+    } else if (list.empty()) {
         ImGui::TextColored(dim, "Keine Wiimote verbunden.");
     } else {
         ImGui::Text("%d verbunden", (int)list.size());

@@ -31,4 +31,5 @@ void nl_hidwii_stop();
 std::vector<NLHidWiimoteState> nl_hidwii_list();      // alle verbundenen (Kopie)
 bool nl_hidwii_get(int index, NLHidWiimoteState& out);
 void nl_hidwii_rumble(int index, bool on);
+bool nl_hidwii_game_here();   // NL Recomp laeuft auf diesem PC -> Wiimotes gehoeren dem Spiel
 void nl_hidwii_set_mpls_signs(int pitch, int yaw, int roll);   // +1/-1, falls eine Achse falsch herum ist
