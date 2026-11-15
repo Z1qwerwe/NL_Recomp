@@ -13,10 +13,20 @@ CEMU_COMMIT = "d4f720597e022737782e6215c0ec3ab1d9ae6636"   # getesteter Stand
 MARK = "# --- Nintendo Land Recomp ---"
 
 
+_UNIX_DIRS = ("devkitpro", "msys64", "msys2", "cygwin", "mingw64", "mingw32")
+
+
 def find_git():
-    g = shutil.which("git")
-    if g:
-        return g
+    # Git aus MSYS2/devkitPro/Cygwin meiden: das versteht Windows-Pfade nicht richtig
+    for d in os.environ.get("PATH", "").split(os.pathsep):
+        g = os.path.join(d.strip('"'), "git.exe")
+        if os.path.isfile(g) and not any(t in g.lower() for t in _UNIX_DIRS):
+            return g
+    for pf in (os.environ.get("ProgramFiles", r"C:\Program Files"),
+               os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")):
+        g = os.path.join(pf, "Git", "cmd", "git.exe")
+        if os.path.isfile(g):
+            return g
     # Visual Studio bringt ein eigenes Git mit
     for pf in (os.environ.get("ProgramFiles", r"C:\Program Files"),
                os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")):
@@ -41,16 +51,36 @@ def fetch(cemu_dir, run, log):
                            "die Komponente 'Git fuer Windows'.")
     env = git_env(git)
     if not os.path.isdir(os.path.join(cemu_dir, ".git")):
+        if os.path.isdir(cemu_dir) and os.listdir(cemu_dir):
+            log(f"{cemu_dir} ist von einem abgebrochenen Versuch uebrig - wird geleert.")
+            shutil.rmtree(cemu_dir, ignore_errors=True)
         log("Lade Cemu-Quellcode (einmalig, ein paar hundert MB) ...")
         run([git, "clone", CEMU_URL, cemu_dir], env=env)
     head = subprocess.run([git, "-C", cemu_dir, "rev-parse", "HEAD"], env=env, capture_output=True, text=True).stdout.strip()
-    if head == CEMU_COMMIT:
-        # Schon auf dem richtigen Stand: nichts zuruecksetzen, sonst wird alles neu kompiliert
-        return
-    run([git, "-C", cemu_dir, "fetch", "--depth", "1", "origin", CEMU_COMMIT], env=env, check=False)
-    run([git, "-C", cemu_dir, "checkout", "-f", CEMU_COMMIT], env=env)
-    log("Lade Cemu-Untermodule (vcpkg, imgui, ...) ...")
-    run([git, "-C", cemu_dir, "submodule", "update", "--init", "--recursive"], env=env)
+    if head != CEMU_COMMIT:
+        run([git, "-C", cemu_dir, "fetch", "--depth", "1", "origin", CEMU_COMMIT], env=env, check=False)
+        run([git, "-C", cemu_dir, "checkout", "-f", CEMU_COMMIT], env=env)
+        log("Lade Cemu-Untermodule (vcpkg, imgui, ...) ...")
+        run([git, "-C", cemu_dir, "submodule", "update", "--init", "--recursive"], env=env)
+    # Untermodule pruefen: ein abgebrochener frueherer Versuch kann sie leer zuruecklassen
+    if not submodules_ok(cemu_dir):
+        log("Cemu-Untermodule fehlen oder sind unvollstaendig - lade sie nach ...")
+        run([git, "-C", cemu_dir, "submodule", "sync", "--recursive"], env=env, check=False)
+        run([git, "-C", cemu_dir, "submodule", "update", "--init", "--recursive", "--force"], env=env)
+        if not submodules_ok(cemu_dir):
+            raise RuntimeError("Die Cemu-Untermodule (vcpkg, imgui ...) konnten nicht geladen werden. "
+                               f"Loesch den Ordner {cemu_dir} und starte 'Spiel bauen' nochmal "
+                               "(Internet muss gehen, Git for Windows muss installiert sein).")
+
+
+_SUBMODULE_MARKERS = (
+    ("dependencies", "vcpkg", "scripts", "buildsystems", "vcpkg.cmake"),
+    ("dependencies", "imgui", "imgui.h"),
+)
+
+
+def submodules_ok(cemu_dir):
+    return all(os.path.isfile(os.path.join(cemu_dir, *m)) for m in _SUBMODULE_MARKERS)
 
 
 # Patches werden immer auf das Original aus Git angewendet (nicht auf die Datei auf der Platte).
