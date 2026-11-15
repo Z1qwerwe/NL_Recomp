@@ -76,6 +76,14 @@ static std::atomic<bool> s_overlay{false};   // Esc-Menue offen -> keine Eingabe
 
 static std::string s_code_buf;              // getippter Code
 
+// Ansicht: wie TV- und GamePad-Bild angeordnet werden (Tab wechselt)
+enum ViewMode { VIEW_SIDE = 0, VIEW_PIP = 1, VIEW_TV = 2, VIEW_PAD = 3, VIEW_COUNT = 4 };
+static const char* kViewNames[VIEW_COUNT] = {"Nebeneinander", "Bild-in-Bild", "Nur TV", "Nur GamePad"};
+static std::atomic<int> s_view{VIEW_SIDE};
+struct Layout { int tv_w = 0, tv_h = 0, pad_x = 0, pad_y = 0, pad_w = 0, pad_h = 0; };
+static Layout s_layout;   // vom Host (Welcome)
+static std::chrono::steady_clock::time_point s_view_changed{};
+
 // Chat
 struct ChatLine { std::string name, text; clk::time_point t; };
 static std::mutex s_chat_mx;
@@ -114,12 +122,13 @@ static void load_settings() {
         if (eq == std::string::npos) continue;
         std::string k = line.substr(0, eq), v = line.substr(eq + 1);
         if (k == "sideways") s_sideways = v != "0";
+        else if (k == "view") s_view = std::clamp(atoi(v.c_str()), 0, (int)VIEW_COUNT - 1);
         else if (k == "last_code") s_code_buf = nl_normalize_code(v);
     }
 }
 static void save_settings() {
     std::ofstream f(s_ini);
-    f << "sideways=" << (s_sideways ? 1 : 0) << "\nlast_code=" << s_code_buf << "\n";
+    f << "sideways=" << (s_sideways ? 1 : 0) << "\nview=" << s_view.load() << "\nlast_code=" << s_code_buf << "\n";
 }
 
 // ===========================================================================
@@ -291,6 +300,7 @@ static void net_loop() {
                     Welcome w;
                     memcpy(&w, d, sizeof(w));
                     s_slot = w.slot;
+                    s_layout = {w.tv_w, w.tv_h, w.pad_x, w.pad_y, w.pad_w, w.pad_h};
                     s_screen = Screen::Playing;
                     send_simple(MSG_KEYFRAME);
                 }
@@ -645,6 +655,12 @@ static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     }
     if (msg == WM_KEYDOWN && s_chat_open && wp == VK_ESCAPE) { s_chat_open = false; return 0; }
+    if (msg == WM_KEYDOWN && wp == VK_TAB && s_screen == Screen::Playing && !s_chat_open && !(lp & (1 << 30))) {
+        s_view = (s_view + 1) % VIEW_COUNT;
+        s_view_changed = std::chrono::steady_clock::now();
+        save_settings();
+        return 0;
+    }
     if (ImGui_ImplWin32_WndProcHandler(hwnd, msg, wp, lp)) return true;
     switch (msg) {
     case WM_SIZE:
@@ -811,7 +827,7 @@ static void ui_home(ImVec2 size, ImFont* big) {
         ImGui::PopID();
     }
     ImGui::EndChild();
-    ImGui::TextDisabled("Angemeldet als %s   |   F11: Vollbild   |   Im Spiel: Esc Menue, Y Chat", nl_steam_my_name().c_str());
+    ImGui::TextDisabled("Angemeldet als %s   |   F11: Vollbild   |   Im Spiel: Esc Menue, Y Chat, Tab Ansicht", nl_steam_my_name().c_str());
     ImGui::End();
 }
 
@@ -838,11 +854,60 @@ static void ui_playing(ImVec2 size, ImFont* big) {
     ImDrawList* bg = ImGui::GetBackgroundDrawList();
     bg->AddRectFilled(ImVec2(0, 0), size, col(0, 0, 0));
     if (s_srv && s_tex_w > 0) {
-        float scale = (std::min)(size.x / s_tex_w, size.y / s_tex_h);
-        float w = s_tex_w * scale, h = s_tex_h * scale;
-        ImVec2 p0((size.x - w) / 2, (size.y - h) / 2);
-        bg->AddImage((ImTextureID)s_srv, p0, ImVec2(p0.x + w, p0.y + h));
-        s_vid_x0 = p0.x; s_vid_y0 = p0.y; s_vid_x1 = p0.x + w; s_vid_y1 = p0.y + h;
+        const float TW = (float)s_tex_w, TH = (float)s_tex_h;
+        Layout L = s_layout;
+        if (L.tv_w <= 0 || L.tv_w > s_tex_w) L = {s_tex_w, s_tex_h, 0, 0, 0, 0};   // alter Host: nur TV
+        const bool has_pad = L.pad_w > 0 && L.pad_h > 0;
+        int view = has_pad ? s_view.load() : VIEW_TV;
+        // ein Ausschnitt der Leinwand (Pixel) in ein Rechteck im Fenster einpassen
+        auto fit = [&](float x0, float y0, float w, float h, ImVec2 a, ImVec2 b, ImVec2& p0, ImVec2& p1) {
+            const float sc = (std::min)((b.x - a.x) / w, (b.y - a.y) / h);
+            const float dw = w * sc, dh = h * sc;
+            p0 = ImVec2(a.x + (b.x - a.x - dw) / 2, a.y + (b.y - a.y - dh) / 2);
+            p1 = ImVec2(p0.x + dw, p0.y + dh);
+            (void)x0; (void)y0;
+        };
+        auto draw = [&](float x0, float y0, float w, float h, ImVec2 p0, ImVec2 p1) {
+            bg->AddImage((ImTextureID)s_srv, p0, p1, ImVec2(x0 / TW, y0 / TH), ImVec2((x0 + w) / TW, (y0 + h) / TH));
+        };
+        ImVec2 tv0{}, tv1{};
+        if (view == VIEW_SIDE) {
+            // TV und GamePad so wie auf der Leinwand: TV links, GamePad rechts oben
+            const float gw = (float)(L.tv_w + L.pad_w), gh = (float)L.tv_h;
+            ImVec2 g0, g1;
+            fit(0, 0, gw, gh, ImVec2(0, 0), size, g0, g1);
+            const float sc = (g1.x - g0.x) / gw;
+            tv0 = g0;
+            tv1 = ImVec2(g0.x + L.tv_w * sc, g0.y + L.tv_h * sc);
+            draw(0, 0, (float)L.tv_w, (float)L.tv_h, tv0, tv1);
+            ImVec2 p0(tv1.x + 6, g0.y), p1(tv1.x + 6 + L.pad_w * sc, g0.y + L.pad_h * sc);
+            draw((float)L.pad_x, (float)L.pad_y, (float)L.pad_w, (float)L.pad_h, p0, p1);
+        } else if (view == VIEW_PAD) {
+            ImVec2 p0, p1;
+            fit(0, 0, (float)L.pad_w, (float)L.pad_h, ImVec2(0, 0), size, p0, p1);
+            draw((float)L.pad_x, (float)L.pad_y, (float)L.pad_w, (float)L.pad_h, p0, p1);
+        } else {
+            fit(0, 0, (float)L.tv_w, (float)L.tv_h, ImVec2(0, 0), size, tv0, tv1);
+            draw(0, 0, (float)L.tv_w, (float)L.tv_h, tv0, tv1);
+            if (view == VIEW_PIP) {
+                const float pw = (tv1.x - tv0.x) * 0.3f, ph = pw * L.pad_h / L.pad_w;
+                ImVec2 p1(tv1.x - 14, tv1.y - 14), p0(p1.x - pw, p1.y - ph);
+                bg->AddRectFilled(ImVec2(p0.x - 3, p0.y - 3), ImVec2(p1.x + 3, p1.y + 3), col(255, 255, 255, 200), 8);
+                draw((float)L.pad_x, (float)L.pad_y, (float)L.pad_w, (float)L.pad_h, p0, p1);
+            }
+        }
+        // Maus als Wiimote-Zeiger gilt nur fuer das TV-Bild
+        if (view == VIEW_PAD) { s_vid_x0 = s_vid_y0 = s_vid_x1 = s_vid_y1 = 0; }
+        else { s_vid_x0 = tv0.x; s_vid_y0 = tv0.y; s_vid_x1 = tv1.x; s_vid_y1 = tv1.y; }
+        // kurz anzeigen, welche Ansicht gewaehlt wurde
+        const float since = std::chrono::duration<float>(std::chrono::steady_clock::now() - s_view_changed).count();
+        if (has_pad && since < 2.0f) {
+            std::string t = std::string("Ansicht: ") + kViewNames[view] + "   (Tab)";
+            ImVec2 ts = ImGui::CalcTextSize(t.c_str());
+            ImVec2 c(size.x / 2, size.y - 60);
+            bg->AddRectFilled(ImVec2(c.x - ts.x / 2 - 16, c.y - 8), ImVec2(c.x + ts.x / 2 + 16, c.y + ts.y + 8), col(255, 255, 255, 220), 14);
+            bg->AddText(ImVec2(c.x - ts.x / 2, c.y), col(30, 40, 55), t.c_str());
+        }
     } else {
         const char* t = "Warte auf das Bild ...";
         ImVec2 ts = ImGui::CalcTextSize(t);
@@ -896,7 +961,7 @@ static void ui_playing(ImVec2 size, ImFont* big) {
         ImGui::End();
     }
     if (!s_overlay) return;
-    const float pw = 520, ph = 400;
+    const float pw = 520, ph = 460;
     ImGui::SetNextWindowPos(ImVec2((size.x - pw) / 2, (size.y - ph) / 2));
     ImGui::SetNextWindowSize(ImVec2(pw, ph));
     ImGui::Begin("##pause", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings);
@@ -913,6 +978,11 @@ static void ui_playing(ImVec2 size, ImFont* big) {
     if (accent_button("Weiterspielen", ImVec2(-1, 52))) s_overlay = false;
     bool sw = s_sideways;
     if (ImGui::Checkbox("Wiimote quer halten", &sw)) { s_sideways = sw; save_settings(); }
+    {
+        int v = s_view;
+        ImGui::SetNextItemWidth(-1);
+        if (ImGui::Combo("##view", &v, kViewNames, VIEW_COUNT)) { s_view = v; save_settings(); }
+    }
     ImGui::Spacing();
     if (ImGui::Button("Vollbild an/aus (F11)", ImVec2(-1, 48))) toggle_fullscreen(GetActiveWindow());
     if (ImGui::Button("Raum verlassen", ImVec2(-1, 48))) {

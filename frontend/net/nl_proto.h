@@ -47,6 +47,9 @@ struct Welcome {
     uint16_t width = 0, height = 0, fps = 0;
     uint32_t sample_rate = 48000;
     uint8_t channels = 2;
+    // Aufteilung der Leinwand (siehe nl_capture_vk.cpp): TV links, GamePad rechts oben
+    uint16_t tv_w = 0, tv_h = 0;
+    uint16_t pad_x = 0, pad_y = 0, pad_w = 0, pad_h = 0;
 };
 
 struct Full {

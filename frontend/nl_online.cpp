@@ -228,7 +228,8 @@ bool ensure_encoder_locked() {
     g_nl_stream_fps = q.fps;
     s_kbps_max = q.kbps;
     s_kbps_now = q.kbps / 2;   // vorsichtig anfangen, dann hochregeln
-    if (!s_encoder.start(q.w, q.h, q.fps, s_kbps_now, on_packet)) {
+    // Leinwand: TV (q.w x q.h) + GamePad (halbe Groesse) rechts daneben
+    if (!s_encoder.start(q.w + q.w / 2, q.h, q.fps, s_kbps_now, on_packet)) {
         set_status("Video-Encoder konnte nicht starten.");
         return false;
     }
@@ -282,6 +283,12 @@ void handle_hello_locked(uint64_t from, const Hello& h) {
     w.width = (uint16_t)s_encoder.width();
     w.height = (uint16_t)s_encoder.height();
     w.fps = (uint16_t)s_encoder.fps();
+    w.tv_w = (uint16_t)(g_nl_stream_w & ~3);
+    w.tv_h = (uint16_t)(g_nl_stream_h & ~3);
+    w.pad_x = w.tv_w;
+    w.pad_y = 0;
+    w.pad_w = (uint16_t)(w.tv_w / 2);
+    w.pad_h = (uint16_t)(w.tv_h / 2);
     nl_net_send(from, CH_CONTROL, &w, sizeof(w), true);
     s_encoder.request_keyframe();
     g_nl_stream_active = true;

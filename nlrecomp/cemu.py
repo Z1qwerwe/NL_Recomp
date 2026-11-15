@@ -341,14 +341,15 @@ def _patch_all(cemu_dir, log):
     rh = os.path.join(src, "Cafe", "HW", "Latte", "Renderer", "Renderer.h")
     _patch_file(rh, "\tvirtual void HandleScreenshotRequest(LatteTextureView* texView, bool padView){}\n",
                 "\tvirtual void HandleScreenshotRequest(LatteTextureView* texView, bool padView){}\n"
-                "\tvirtual void NL_StreamCapture(LatteTextureView* texView) {} // Nintendo Land Recomp\n", log)
+                "\tvirtual void NL_StreamCapture(LatteTextureView* texView, bool pad) {} // Nintendo Land Recomp\n", log)
     vh = os.path.join(src, "Cafe", "HW", "Latte", "Renderer", "Vulkan", "VulkanRenderer.h")
     _patch_file(vh, "\tvoid HandleScreenshotRequest(LatteTextureView* texView, bool padView) override;\n",
                 "\tvoid HandleScreenshotRequest(LatteTextureView* texView, bool padView) override;\n"
-                "\tvoid NL_StreamCapture(LatteTextureView* texView) override; // Nintendo Land Recomp\n", log)
+                "\tvoid NL_StreamCapture(LatteTextureView* texView, bool pad) override; // Nintendo Land Recomp\n", log)
     _patch_file(rt, "\tif (!texView)\n\t{\n\t\treturn;\n\t}\n" + NL_COMBINED,
                 "\tif (!texView)\n\t{\n\t\treturn;\n\t}\n"
-                "\tif (renderTarget & RENDER_TARGET_TV) g_renderer->NL_StreamCapture(texView); // Nintendo Land Recomp: Online\n" + NL_COMBINED, log)
+                "\tif (renderTarget & RENDER_TARGET_TV) g_renderer->NL_StreamCapture(texView, false); // Nintendo Land Recomp: Online\n"
+                "\tif (renderTarget & RENDER_TARGET_DRC) g_renderer->NL_StreamCapture(texView, true);\n" + NL_COMBINED, log)
     _patch_file(ax, '#include "Cafe/OS/libs/snd_core/ax.h"\n',
                 '#include "Cafe/OS/libs/snd_core/ax.h"\n'
                 'extern void (*g_nl_stream_audio)(const sint16* samples, int frames, int channels); // Nintendo Land Recomp\n', log)
