@@ -19,6 +19,7 @@
 #include "../net/nl_steam.h"
 #include "../net/nl_video.h"
 #include "../net/nl_adpcm.h"
+#include "../net/nl_discord.h"
 #include "nl_logo_rgba.h"
 
 #include <algorithm>
@@ -216,6 +217,7 @@ static void leave_session(bool tell_host) {
     if (s_host && tell_host) send_simple(MSG_BYE);
     s_host = 0;
     s_slot = 0;
+    nl_discord_set("NL Online", "In the menu");
 }
 
 static uint64_t now_us() {
@@ -326,6 +328,14 @@ static void net_loop() {
                     Chat c;
                     memcpy(&c, d, sizeof(c));
                     chat_add(std::string(c.name, strnlen(c.name, sizeof(c.name))), std::string(c.text, strnlen(c.text, sizeof(c.text))));
+                }
+                break;
+            case MSG_ACTIVITY:
+                if (n >= sizeof(Activity)) {
+                    Activity a;
+                    memcpy(&a, d, sizeof(a));
+                    const std::string att(a.attraction, strnlen(a.attraction, sizeof(a.attraction)));
+                    nl_discord_set(att.empty() ? "In the Plaza" : att, "Online with friends", a.players, 5, a.start_unix);
                 }
                 break;
             case MSG_PONG:
@@ -1009,6 +1019,8 @@ int main(int argc, char* argv[]) {
     CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     SetEnvironmentVariableW(L"SteamAppId", L"480");
     SetEnvironmentVariableW(L"SteamGameId", L"480");
+    nl_discord_start();
+    nl_discord_set("NL Online", "In the menu");
     const bool steam = nl_steam_available() && nl_steam_init();
     if (steam) {
         nl_steam_set_status("Spielt online mit");
@@ -1136,6 +1148,7 @@ int main(int argc, char* argv[]) {
     if (s_xa) s_xa->Release();
     if (s_pad) SDL_CloseGamepad(s_pad);
     SDL_Quit();
+    nl_discord_stop();
     nl_steam_shutdown();
     return 0;
 }

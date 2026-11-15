@@ -356,6 +356,12 @@ def _patch_all(cemu_dir, log):
     _patch_file(ax, "\t\t\tif(g_tvAudio)\n\t\t\t\tg_tvAudio->FeedBlock(tempTVChannelData);\n",
                 "\t\t\tif(g_tvAudio)\n\t\t\t\tg_tvAudio->FeedBlock(tempTVChannelData);\n"
                 "\t\t\tif (g_nl_stream_audio) g_nl_stream_audio(tempTVChannelData, AX_SAMPLES_PER_3MS_48KHZ * AX_FRAMES_PER_GROUP, (int)channels); // Nintendo Land Recomp\n", log)
+    # 13. Discord: welche Dateien das Spiel oeffnet (daran erkennt man das Minispiel)
+    fsc = os.path.join(src, "Cafe", "Filesystem", "fsc.cpp")
+    _patch_file(fsc, "FSCVirtualFile* fsc_open(const char* path, FSC_ACCESS_FLAG accessFlags, sint32* fscStatus, sint32 maxPriority)\n{\n",
+                "extern void (*g_nl_file_open_hook)(const char* path); // Nintendo Land Recomp\n"
+                "FSCVirtualFile* fsc_open(const char* path, FSC_ACCESS_FLAG accessFlags, sint32* fscStatus, sint32 maxPriority)\n{\n"
+                "\tif (g_nl_file_open_hook) g_nl_file_open_hook(path);\n", log)
     fu = os.path.join(cemu_dir, "src", "util", "Fiber", "FiberUnix.cpp")
     if os.path.isfile(fu):
         _patch_file(fu, "const size_t stackSize = 2 * 1024 * 1024;",

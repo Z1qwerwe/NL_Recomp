@@ -23,6 +23,7 @@ std::atomic<bool> g_nl_stream_active{false};
 std::atomic<int> g_nl_stream_w{1280}, g_nl_stream_h{720}, g_nl_stream_fps{60};   // Groesse des TV-Teils
 void (*g_nl_stream_frame)(const uint8* rgba, int w, int h, int stride, bool srgb) = nullptr;
 void (*g_nl_stream_audio)(const sint16* samples, int frames, int channels) = nullptr;   // aus ax_out.cpp
+void (*g_nl_file_open_hook)(const char* path) = nullptr;   // aus fsc.cpp (Discord: Minispiel erkennen)
 
 namespace {
 struct NLCapSlot {

@@ -2,7 +2,7 @@
 # Nutzt Cemus Kern-Bibliotheken (OS, Grafik, Audio, Eingabe) ohne Cemus Oberflaeche.
 set(NL_FRONTEND_DIR ${CMAKE_CURRENT_LIST_DIR})
 
-set(NL_NET_SOURCES ${NL_FRONTEND_DIR}/net/nl_steam.cpp ${NL_FRONTEND_DIR}/net/nl_video.cpp)
+set(NL_NET_SOURCES ${NL_FRONTEND_DIR}/net/nl_steam.cpp ${NL_FRONTEND_DIR}/net/nl_video.cpp ${NL_FRONTEND_DIR}/net/nl_discord.cpp)
 add_executable(NintendoLand ${NL_FRONTEND_DIR}/main.cpp ${NL_FRONTEND_DIR}/nl_input.cpp ${NL_FRONTEND_DIR}/nl_menu.cpp ${NL_FRONTEND_DIR}/nl_det.cpp
   ${NL_FRONTEND_DIR}/nl_wiipad.cpp ${NL_FRONTEND_DIR}/nl_online.cpp ${NL_NET_SOURCES})
 set_source_files_properties(${NL_NET_SOURCES} PROPERTIES SKIP_PRECOMPILE_HEADERS ON)

@@ -31,6 +31,7 @@ enum MsgType : uint8_t {
     MSG_KICK = 8,       // Host -> Client
     MSG_STATS = 9,      // Client -> Host: Empfangsstatistik (fuer die Bitrate)
     MSG_CHAT = 10,      // beide Richtungen: Chatnachricht (Host verteilt an alle)
+    MSG_ACTIVITY = 11,  // Host -> Client: was gerade gespielt wird (fuer Discord)
 };
 
 #pragma pack(push, 1)
@@ -84,6 +85,13 @@ struct Stats {
     uint32_t frames_ok = 0;     // seit der letzten Meldung komplett empfangen
     uint32_t frames_lost = 0;   // seit der letzten Meldung verloren
     uint32_t audio_underruns = 0;
+};
+
+struct Activity {
+    uint8_t type = MSG_ACTIVITY;
+    char attraction[64] = {};   // leer = Plaza / Menue
+    uint8_t players = 1;        // alle Spieler im Raum (GamePad + Wiimotes)
+    int64_t start_unix = 0;     // seit wann gespielt wird
 };
 
 struct Chat {

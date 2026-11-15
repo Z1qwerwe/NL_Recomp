@@ -5,6 +5,7 @@
 #include "net/nl_steam.h"
 #include "net/nl_video.h"
 #include "net/nl_adpcm.h"
+#include "net/nl_discord.h"
 
 #include <Windows.h>
 #include <chrono>
@@ -17,6 +18,7 @@ extern std::atomic<bool> g_nl_stream_active;
 extern std::atomic<int> g_nl_stream_w, g_nl_stream_h, g_nl_stream_fps;
 extern void (*g_nl_stream_frame)(const uint8* rgba, int w, int h, int stride, bool srgb);
 extern void (*g_nl_stream_audio)(const sint16* samples, int frames, int channels);
+extern void (*g_nl_file_open_hook)(const char* path);
 
 using namespace nlnet;
 using clk = std::chrono::steady_clock;
@@ -92,6 +94,47 @@ void chat_broadcast_locked(const std::string& name, const std::string& text) {
 void system_msg_locked(const std::string& text) {
     chat_add("", text);
     chat_broadcast_locked("", text);
+}
+
+// ---------------------------------------------------------------- Discord / Minispiel
+std::mutex s_act_mx;
+std::string s_attraction;            // gerade gespieltes Minispiel (leer = Plaza)
+bool s_act_dirty = true;
+const int64_t s_start_unix = (int64_t)std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+
+void on_file_open(const char* path) {
+    if (!path || !strstr(path, "/Package/")) return;
+    cemuLog_log(LogType::Force, "NL: Paket geladen: {}", path);   // zum Lernen, in welcher Reihenfolge das Spiel laedt
+    std::string a = nl_attraction_from_path(path);
+    std::scoped_lock l(s_act_mx);
+    if (!a.empty() && a != s_attraction) { s_attraction = a; s_act_dirty = true; }
+    else if (a.empty() && strstr(path, "/Ttl_") && !s_attraction.empty()) { s_attraction.clear(); s_act_dirty = true; }
+}
+
+int local_players() {
+    int n = 1;   // GamePad
+    for (int i = 1; i <= 4; i++) n += nl_wii_slot(i).used ? 1 : 0;
+    return n;
+}
+
+// Discord und Gaeste auf den neuesten Stand bringen (Netz-Thread, mit s_mx)
+void update_activity_locked(bool force) {
+    std::string a;
+    {
+        std::scoped_lock l(s_act_mx);
+        if (!s_act_dirty && !force) return;
+        s_act_dirty = false;
+        a = s_attraction;
+    }
+    const int players = local_players();
+    const std::string details = a.empty() ? "In the Plaza" : a;
+    std::string state = s_hosting ? (s_clients.empty() ? "Online room open" : "Online with friends") : (players > 1 ? "Local multiplayer" : "Playing solo");
+    nl_discord_set(details, state, s_hosting ? players : 0, s_hosting ? 5 : 0, s_start_unix);
+    Activity m;
+    strncpy(m.attraction, a.c_str(), sizeof(m.attraction) - 1);
+    m.players = (uint8_t)players;
+    m.start_unix = s_start_unix;
+    for (auto& [id, c] : s_clients) nl_net_send(id, CH_CONTROL, &m, sizeof(m), true);
 }
 
 void update_peers_locked() {
@@ -208,6 +251,7 @@ void remove_client_locked(uint64_t id, bool send_bye, uint8_t type = MSG_BYE) {
     }
     const int slot = it->second.slot;
     set_status(it->second.name + " ist gegangen.");
+    { std::scoped_lock la(s_act_mx); s_act_dirty = true; }
     system_msg_locked(it->second.name + " ist gegangen.");
     s_clients.erase(it);
     update_peers_locked();
@@ -275,6 +319,7 @@ void handle_hello_locked(uint64_t from, const Hello& h) {
         it = s_clients.emplace(from, c).first;
         update_peers_locked();
         set_status(name + " spielt jetzt als Wiimote " + std::to_string(slot) + " mit.");
+        { std::scoped_lock la(s_act_mx); s_act_dirty = true; }
         system_msg_locked(name + " ist dabei (Wiimote " + std::to_string(slot) + ").");
         update_presence_locked();
     }
@@ -401,6 +446,12 @@ void net_loop() {
                 if (clk::now() - c.last_seen > std::chrono::seconds(8)) dead.push_back(id);
             for (uint64_t id : dead) remove_client_locked(id, true);
             adapt_bitrate_locked();
+            static auto s_last_act = clk::now();
+            if (clk::now() - s_last_act > std::chrono::seconds(2)) {   // auch lokale Wiimotes / Raum auf/zu
+                s_last_act = clk::now();
+                update_activity_locked(true);
+            }
+            update_activity_locked(false);
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(s_hosting ? 1 : 20));
     }
@@ -416,6 +467,10 @@ void nl_online_init() {
     s_inited = true;
     g_nl_stream_frame = on_frame;
     g_nl_stream_audio = on_audio;
+    g_nl_file_open_hook = on_file_open;
+    nl_discord_start();
+    s_quit = false;
+    s_thread = std::thread(net_loop);   // laeuft auch ohne Steam (Discord, Minispiel-Erkennung)
     if (!nl_steam_available()) {
         s_status = "steam_api64.dll fehlt neben dem Spiel - im Launcher neu bauen.";
         return;
@@ -430,8 +485,6 @@ void nl_online_init() {
     // Einladung angenommen, waehrend das Spiel laeuft -> als Gast beitreten
     nl_steam_on_join_request([](std::string code) { nl_online_join(code); });
     s_status = "Mit Steam verbunden als " + nl_steam_my_name() + ".";
-    s_quit = false;
-    s_thread = std::thread(net_loop);
 }
 
 void nl_online_shutdown() {
@@ -440,6 +493,8 @@ void nl_online_shutdown() {
     if (s_thread.joinable()) s_thread.join();
     g_nl_stream_frame = nullptr;
     g_nl_stream_audio = nullptr;
+    g_nl_file_open_hook = nullptr;
+    nl_discord_stop();
     nl_steam_shutdown();
 }
 
