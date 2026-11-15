@@ -13,6 +13,8 @@
 #include "input/InputManager.h"
 #include "input/api/Controller.h"
 #include "input/emulated/WiimoteController.h"
+#include "input/motion/MotionSample.h"
+#include "util/math/quaternion.h"
 #if HAS_WIIMOTE
 #include "input/api/Wiimote/NativeWiimoteController.h"
 #endif
@@ -31,6 +33,7 @@ public:
         set_axis_settings(AxisSetting(0.0f));
         set_rotation_settings(AxisSetting(0.0f));
         set_trigger_settings(AxisSetting(0.0f));
+        set_use_motion(true);   // Ausrichtung aus dem Zeiger (siehe get_motion_sample)
         m_last = std::chrono::steady_clock::now();
     }
     std::string_view api_name() const override { return "NintendoLand"; }
@@ -42,6 +45,26 @@ public:
     glm::vec2 get_position() override { std::scoped_lock l(m_mx); return m_ptr; }
     glm::vec2 get_prev_position() override { std::scoped_lock l(m_mx); return m_prev; }
     PositionVisibility GetPositionVisibility() override { return PositionVisibility::FULL; }
+
+    // Nintendo Land rechnet den Wiimote-Zeiger mit MotionPlus aus der Ausrichtung der Wiimote.
+    // Deshalb "dreht" der Zeiger (Maus des Gastes / rechter Stick) die Wiimote mit: nach oben zeigen =
+    // nach oben neigen, nach links zeigen = nach links drehen. Muster wie Cemus Maus-Gyro beim GamePad.
+    bool has_motion() override { return true; }
+    MotionSample get_motion_sample() override {
+        std::scoped_lock l(m_mx);
+        const float rotX = (m_ptr.y * 2.0f - 1.0f) * 25.0f;    // Grad, hoch/runter
+        const float rotY = (m_ptr.x * 2.0f - 1.0f) * -35.0f;   // Grad, links/rechts
+        Quaternion<float> q(rotX, rotY, 0.0f);
+        float quat[4] = {q.w, q.x, q.y, q.z};
+        const float pitch = rotX * 3.14159265f / 180.0f;
+        float acc[3] = {0.0f, std::sin(pitch), std::cos(pitch)};   // Schwerkraft, ruhig gehalten
+        float gyro[3] = {std::clamp((rotX - m_last_rot[0]) / 360.0f, -1.0f, 1.0f),
+                         std::clamp((rotY - m_last_rot[1]) / 360.0f * 15.0f, -1.0f, 1.0f), 0.0f};
+        float orient[3] = {rotX / 360.0f, rotY / 360.0f, 0.0f};
+        m_last_rot[0] = rotX;
+        m_last_rot[1] = rotY;
+        return MotionSample(acc, 0.0f, gyro, orient, quat);
+    }
 
     ControllerState raw_state() override {
         NLWiiIn in = m_src ? m_src() : NLWiiIn{};
@@ -99,6 +122,7 @@ private:
     NLWiiSource m_src;
     std::mutex m_mx;
     glm::vec2 m_ptr{0.5f, 0.5f}, m_prev{0.5f, 0.5f};
+    float m_last_rot[2] = {0, 0};
     std::chrono::steady_clock::time_point m_last;
 };
 

@@ -30,6 +30,7 @@ struct Client {
     clk::time_point last_seen;
     // fuer die Bitrate-Regelung
     float loss = 0;            // zuletzt gemeldeter Bildverlust (0..1)
+    bool ptr_logged = false;
     int ping_base = 0;         // niedrigster Ping (ohne Stau)
     clk::time_point base_time{};
 };
@@ -382,6 +383,10 @@ void net_loop() {
             w.lt = in.lt / 255.0f; w.rt = in.rt / 255.0f;
             w.sideways = (in.flags & IN_SIDEWAYS) != 0;
             w.has_ptr = (in.flags & IN_POINTER) != 0;
+            if (w.has_ptr && !c.ptr_logged) {   // einmal ins Log: hilft beim Testen des Maus-Zeigers
+                c.ptr_logged = true;
+                cemuLog_log(LogType::Force, "Online: {} zielt mit der Maus (Wiimote {})", c.name, c.slot);
+            }
             w.px = in.px / 65535.0f;
             w.py = in.py / 65535.0f;
             w.connected = true;
