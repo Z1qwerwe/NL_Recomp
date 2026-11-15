@@ -80,6 +80,13 @@ int s_wiimote_index = 0;
 int s_acc_x_sign = -1;            // Wiimote-x (wiibrew: nach links) -> SDL-x (nach rechts)
 int s_mpls_sign[3] = {1, 1, 1};   // pitch, yaw, roll
 bool s_show_pointer = true;
+// Sensorleiste mit Gyro nachbauen (wie Dolphin): drehen = links/rechts, neigen = hoch/runter
+bool s_gyro_pointer = true;
+float s_gyro_yaw_range = 25.0f;     // Grad fuer die ganze Bildbreite
+float s_gyro_pitch_range = 20.0f;   // Grad fuer die ganze Bildhoehe
+float s_gp_yaw = 0, s_gp_pitch = 0, s_gp_pitch_center = 0;
+bool s_gp_init = false;
+clk::time_point s_last_mouse_move{};
 bool s_hid = true;   // eigener Wiimote-Treiber (nur NLOnline)
 
 SDL_Gamepad* s_pad = nullptr;
@@ -87,7 +94,7 @@ std::string s_pad_name;
 bool s_pad_gyro = false;
 
 // Zeiger
-enum PtrSrc { PTR_NONE, PTR_MOUSE, PTR_STICK, PTR_IR };
+enum PtrSrc { PTR_NONE, PTR_MOUSE, PTR_STICK, PTR_IR, PTR_GYRO };
 PtrSrc s_ptr_src = PTR_NONE;
 float s_ptr_u = 0.5f, s_ptr_v = 0.5f;
 float s_last_mouse_u = -1, s_last_mouse_v = -1;
@@ -361,12 +368,8 @@ Input nlin_poll(const NLInFrame& f) {
         if (f.mouse_on_tv) { s_ptr_u = f.mouse_u; s_ptr_v = f.mouse_v; }
         else s_ptr_src = PTR_NONE;   // Maus neben dem Bild = Zeiger weg
     }
-    if (s_ptr_src != PTR_NONE) {
-        in.flags |= IN_POINTER;
-        if (s_ptr_src == PTR_IR) in.flags |= IN_PTR_IR;
-        in.px = (uint16_t)std::clamp((int)(s_ptr_u * 65535), 0, 65535);
-        in.py = (uint16_t)std::clamp((int)(s_ptr_v * 65535), 0, 65535);
-    }
+    if (mouse_moved && keys) s_last_mouse_move = now;
+    const bool recenter_edge = s_recenter != s_last_in.recenter;
 
     // ---- Bewegung
     in.recenter = s_recenter;
@@ -401,6 +404,53 @@ Input nlin_poll(const NLInFrame& f) {
         in.shake = down(A_SHAKE) ? 255 : 0;
     }
     if (s_pad && in.source == SRC_KEYBOARD && (std::abs(nx) > 0.2f || stick_moved)) in.source = SRC_CONTROLLER;
+
+    // ---- Sensorleiste mit Gyro nachbauen (echte Wiimote mit MotionPlus ohne Sensorleiste, Gyro-Controller)
+    const bool has_gyro = (in.flags & IN_IMU_REAL) && ((s_wm_ok && s_wm.gyro_valid) || (!s_wm_ok && s_pad_gyro));
+    if (s_gyro_pointer && has_gyro && !(s_wm_ok && s_wm.ir_seen)) {
+        // "oben" im Geraet aus der Schwerkraft (SDL-Achsen: x rechts, y oben, z zum Spieler)
+        float up[3] = {in.acc[0], in.acc[1], in.acc[2]};
+        const float len = std::sqrt(up[0] * up[0] + up[1] * up[1] + up[2] * up[2]);
+        if (len > 1.0f) {
+            for (float& c : up) c /= len;
+            const float r2d = 57.2957795f;
+            // links/rechts drehen = Drehung um die Senkrechte (unabhaengig davon, wie man die Wiimote kippt)
+            const float yaw_rate = (in.gyro[0] * up[0] + in.gyro[1] * up[1] + in.gyro[2] * up[2]) * r2d;   // + = nach links
+            // hoch/runter: Drehung um die waagrechte Querachse, dazu langsam an die Schwerkraft angleichen (kein Wegdriften)
+            float right[3] = {up[1], -up[0], 0.0f};   // Kreuzprodukt vorne(0,0,-1) x oben
+            const float rl = std::sqrt(right[0] * right[0] + right[1] * right[1]);
+            if (rl > 0.1f) { right[0] /= rl; right[1] /= rl; }
+            const float pitch_rate = (in.gyro[0] * right[0] + in.gyro[1] * right[1]) * r2d;   // + = Spitze hoch
+            const float acc_pitch = std::asin(std::clamp(-up[2], -1.0f, 1.0f)) * r2d;
+            if (!s_gp_init || recenter_edge) {
+                s_gp_init = true;
+                s_gp_yaw = 0;
+                s_gp_pitch = acc_pitch;
+                s_gp_pitch_center = acc_pitch;
+            }
+            s_gp_yaw += yaw_rate * dt;
+            s_gp_pitch = (s_gp_pitch + pitch_rate * dt) * 0.98f + acc_pitch * 0.02f;
+            // nicht ewig weit raus zaehlen: am Rand festhalten (wie ein Zeiger am Bildschirmrand)
+            const float ylim = s_gyro_yaw_range * 0.75f;
+            s_gp_yaw = std::clamp(s_gp_yaw, -ylim, ylim);
+            const bool mouse_recent = now - s_last_mouse_move < std::chrono::seconds(1);
+            if (!mouse_recent && !stick_moved) {
+                s_ptr_src = PTR_GYRO;
+                s_ptr_u = std::clamp(0.5f - s_gp_yaw / s_gyro_yaw_range, 0.0f, 1.0f);
+                s_ptr_v = std::clamp(0.5f - (s_gp_pitch - s_gp_pitch_center) / s_gyro_pitch_range, 0.0f, 1.0f);
+            }
+        }
+    } else {
+        s_gp_init = false;
+        if (s_ptr_src == PTR_GYRO) s_ptr_src = PTR_NONE;
+    }
+
+    if (s_ptr_src != PTR_NONE) {
+        in.flags |= IN_POINTER;
+        if (s_ptr_src == PTR_IR) in.flags |= IN_PTR_IR;
+        in.px = (uint16_t)std::clamp((int)(s_ptr_u * 65535), 0, 65535);
+        in.py = (uint16_t)std::clamp((int)(s_ptr_v * 65535), 0, 65535);
+    }
     s_last_source = in.source;
     s_last_in = in;
     return in;
@@ -416,6 +466,9 @@ bool nlin_load_kv(const std::string& k, const std::string& v) {
     if (k == "use_wiimote") { s_use_wiimote = v != "0"; return true; }
     if (k == "wiimote_index") { s_wiimote_index = std::clamp(atoi(v.c_str()), 0, 3); return true; }
     if (k == "show_pointer") { s_show_pointer = v != "0"; return true; }
+    if (k == "gyro_pointer") { s_gyro_pointer = v != "0"; return true; }
+    if (k == "gyro_yaw_range") { s_gyro_yaw_range = std::clamp((float)atof(v.c_str()), 5.0f, 90.0f); return true; }
+    if (k == "gyro_pitch_range") { s_gyro_pitch_range = std::clamp((float)atof(v.c_str()), 5.0f, 90.0f); return true; }
     if (k == "wiimote_acc_x") { s_acc_x_sign = atoi(v.c_str()) < 0 ? -1 : 1; return true; }
     if (k == "mpls_signs") {
         int p = 1, y = 1, r = 1;
@@ -439,7 +492,8 @@ bool nlin_load_kv(const std::string& k, const std::string& v) {
 void nlin_save(std::ostream& out) {
     std::scoped_lock l(s_mx);
     out << "sideways=" << (s_sideways ? 1 : 0) << "\npad_gyro=" << (s_use_pad_gyro ? 1 : 0) << "\nuse_wiimote=" << (s_use_wiimote ? 1 : 0)
-        << "\nwiimote_index=" << s_wiimote_index << "\nshow_pointer=" << (s_show_pointer ? 1 : 0) << "\nwiimote_acc_x=" << s_acc_x_sign
+        << "\nwiimote_index=" << s_wiimote_index << "\nshow_pointer=" << (s_show_pointer ? 1 : 0) << "\ngyro_pointer=" << (s_gyro_pointer ? 1 : 0)
+        << "\ngyro_yaw_range=" << s_gyro_yaw_range << "\ngyro_pitch_range=" << s_gyro_pitch_range << "\nwiimote_acc_x=" << s_acc_x_sign
         << "\nmpls_signs=" << s_mpls_sign[0] << "," << s_mpls_sign[1] << "," << s_mpls_sign[2] << "\n";
     for (int a = 0; a < A_COUNT; a++)
         out << "bind_" << kActs[a].key << "=" << s_binds[a].key[0] << "," << s_binds[a].key[1] << "," << s_binds[a].pad << "\n";
@@ -541,6 +595,15 @@ bool nlin_ui(ImFont* big) {
         }
         if (ImGui::Checkbox("Wiimote quer halten (Steuerkreuz gedreht, z.B. Mario Chase)", &s_sideways)) changed = true;
         if (ImGui::Checkbox("Meinen Zeiger anzeigen", &s_show_pointer)) changed = true;
+        if (ImGui::Checkbox("Sensorleiste mit Gyro nachbauen (wie Dolphin)", &s_gyro_pointer)) changed = true;
+        ImGui::TextColored(dim, "Echte Wiimote mit MotionPlus ohne Sensorleiste oder Controller mit Gyro: drehen = Zeiger links/rechts, "
+                                "neigen = hoch/runter. Zeigt er daneben: auf die Bildmitte zielen und 'Zentrieren' druecken.");
+        if (s_gyro_pointer) {
+            ImGui::SetNextItemWidth(320);
+            if (ImGui::SliderFloat("Drehen fuer die ganze Breite", &s_gyro_yaw_range, 5.0f, 90.0f, "%.0f Grad")) changed = true;
+            ImGui::SetNextItemWidth(320);
+            if (ImGui::SliderFloat("Neigen fuer die ganze Hoehe", &s_gyro_pitch_range, 5.0f, 90.0f, "%.0f Grad")) changed = true;
+        }
     }
     ImGui::TextColored(dim, "Ohne echte Sensoren dreht sich die Wiimote dahin, wo dein Zeiger ist: Maus schnell bewegen = Schwung "
                             "(z.B. das Schwert in Battle Quest). Kippen und Schuetteln gehen ueber Tasten.");
@@ -556,7 +619,8 @@ bool nlin_ui(ImFont* big) {
         ImGui::Text("Nunchuk-Stick: %.2f / %.2f", s_last_in.nx / 32767.0f, s_last_in.ny / 32767.0f);
         if (s_last_in.flags & IN_POINTER)
             ImGui::Text("Zeiger: %.0f %% / %.0f %%  (%s)", s_last_in.px / 655.35f, s_last_in.py / 655.35f,
-                        (s_last_in.flags & IN_PTR_IR) ? "Wiimote-Kamera" : s_ptr_src == PTR_STICK ? "Stick" : "Maus");
+                        (s_last_in.flags & IN_PTR_IR) ? "Wiimote-Kamera" : s_ptr_src == PTR_GYRO ? "Gyro (nachgebaute Sensorleiste)"
+                        : s_ptr_src == PTR_STICK ? "Stick" : "Maus");
         else ImGui::TextColored(dim, "Zeiger: keiner (Maus aufs TV-Bild, rechter Stick oder Wiimote auf die Sensorleiste)");
         if (s_last_in.flags & IN_IMU_REAL)
             ImGui::Text("Bewegung: echte Sensoren  -  Gyro %.2f %.2f %.2f rad/s", s_last_in.gyro[0], s_last_in.gyro[1], s_last_in.gyro[2]);
