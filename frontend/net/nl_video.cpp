@@ -455,6 +455,7 @@ bool NLVideoDecoder::init() {
     IMFAttributes* attr = nullptr;
     if (SUCCEEDED(mft->GetAttributes(&attr)) && attr) {
         attr->SetUINT32(CODECAPI_AVLowLatencyMode, TRUE);
+        attr->SetUINT32(MF_LOW_LATENCY, TRUE);   // Bilder sofort ausgeben, nicht fuer Umsortierung puffern
         attr->Release();
     }
     ICodecAPI* api = nullptr;

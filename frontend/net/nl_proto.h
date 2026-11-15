@@ -8,7 +8,7 @@
 
 namespace nlnet {
 
-constexpr uint32_t kVersion = 2;
+constexpr uint32_t kVersion = 3;
 constexpr int kChunk = 1100;   // Nutzdaten pro Video-Stueck (passt in ein UDP-Paket)
 constexpr int kMaxRemote = 4;   // Wiimote 1-4
 
@@ -89,10 +89,12 @@ struct Chat {
     char text[200] = {};
 };
 
-// Kopf jedes Ton-Pakets, danach int16 stereo, 48 kHz
+// Kopf jedes Ton-Pakets, danach Ton (48 kHz stereo): roh int16 oder IMA-ADPCM (nl_adpcm.h)
+enum AudioCodec : uint8_t { AUDIO_PCM = 0, AUDIO_ADPCM = 1 };
 struct AudioHeader {
     uint32_t seq = 0;
     uint16_t frames = 0;
+    uint8_t codec = AUDIO_PCM;
 };
 
 // Controller-Zustand eines Clients. Knoepfe = SDL3-Gamepad-Nummern als Bits

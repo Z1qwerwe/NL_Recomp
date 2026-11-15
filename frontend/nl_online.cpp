@@ -4,6 +4,7 @@
 #include "net/nl_proto.h"
 #include "net/nl_steam.h"
 #include "net/nl_video.h"
+#include "net/nl_adpcm.h"
 
 #include <Windows.h>
 #include <chrono>
@@ -27,6 +28,10 @@ struct Client {
     std::string name;
     uint32_t input_seq = 0;
     clk::time_point last_seen;
+    // fuer die Bitrate-Regelung
+    float loss = 0;            // zuletzt gemeldeter Bildverlust (0..1)
+    int ping_base = 0;         // niedrigster Ping (ohne Stau)
+    clk::time_point base_time{};
 };
 
 struct Quality { int w, h, fps, kbps; };
@@ -127,35 +132,48 @@ void on_packet(const uint8_t* data, size_t size, bool key, uint64_t) {
     }
 }
 
-// Bitrate an die schlechteste Verbindung anpassen
-int s_kbps_max = 6000, s_kbps_now = 6000;
-clk::time_point s_last_down{}, s_last_up{};
-void adapt_bitrate_locked(const Stats& st) {
-    const uint32_t total = st.frames_ok + st.frames_lost;
-    if (total < 10 || !s_encoder.running()) return;
-    const float loss = (float)st.frames_lost / total;
+// Bitrate an die schlechteste Verbindung anpassen.
+// Stau erkennt man am steigenden Ping (der Router puffert), noch bevor Pakete verloren gehen.
+int s_kbps_max = 6000, s_kbps_now = 3000;
+clk::time_point s_last_down{}, s_last_up{}, s_last_adapt{};
+
+void adapt_bitrate_locked() {
     const auto now = clk::now();
+    if (!s_encoder.running() || s_clients.empty() || now - s_last_adapt < std::chrono::milliseconds(500)) return;
+    s_last_adapt = now;
+    float loss = 0;
+    int over = 0;   // wie weit der Ping ueber dem Grundwert liegt (ms), schlechtester Gast
+    for (auto& [id, c] : s_clients) {
+        loss = std::max(loss, c.loss);
+        c.loss = 0;
+        const int p = nl_net_ping_ms(id);
+        if (p < 0) continue;
+        // Grundwert: kleinster Ping; alle 10 s darf er leicht steigen (Route kann sich aendern)
+        if (c.ping_base == 0 || p < c.ping_base) { c.ping_base = p; c.base_time = now; }
+        else if (now - c.base_time > std::chrono::seconds(10)) { c.ping_base += 3; c.base_time = now; }
+        over = std::max(over, p - c.ping_base);
+    }
     int k = s_kbps_now;
-    if (loss > 0.04f && now - s_last_down > std::chrono::seconds(1)) {
-        k = std::max(1500, (int)(k * 0.7f));
+    if ((over > 45 || loss > 0.03f) && now - s_last_down > std::chrono::milliseconds(800)) {
+        k = std::max(700, (int)(k * (over > 120 ? 0.6f : 0.78f)));
         s_last_down = now;
-    } else if (loss < 0.01f && now - s_last_down > std::chrono::seconds(6) && now - s_last_up > std::chrono::seconds(3)) {
-        k = std::min(s_kbps_max, (int)(k * 1.15f));
+    } else if (over < 15 && loss < 0.01f && now - s_last_down > std::chrono::seconds(5) && now - s_last_up > std::chrono::seconds(2)) {
+        k = std::min(s_kbps_max, (int)(k * 1.08f) + 50);
         s_last_up = now;
     }
     if (k != s_kbps_now) {
         s_kbps_now = k;
         s_encoder.set_bitrate(k);
-        cemuLog_log(LogType::Force, "Online: Bitrate {} kbit/s (Verlust {:.0f}%)", k, loss * 100);
+        cemuLog_log(LogType::Force, "Online: Bitrate {} kbit/s (Verlust {:.0f}%, Ping +{} ms)", k, loss * 100, over);
     }
 }
 
 void on_audio(const sint16* samples, int frames, int channels) {
     if (!g_nl_stream_active) return;
-    std::vector<uint8_t> msg(sizeof(AudioHeader) + (size_t)frames * 4);
-    AudioHeader hdr;
-    hdr.frames = (uint16_t)frames;
-    int16_t* out = (int16_t*)(msg.data() + sizeof(hdr));
+    static std::vector<int16_t> pcm;
+    static std::vector<uint8_t> packed, msg;
+    static nladpcm::State st[2];   // laeuft nur im Ton-Thread
+    pcm.resize((size_t)frames * 2);
     for (int i = 0; i < frames; i++) {
         const sint16* f = samples + (size_t)i * channels;
         int l = f[0], r = channels > 1 ? f[1] : f[0];
@@ -163,11 +181,17 @@ void on_audio(const sint16* samples, int frames, int channels) {
             l = (int)(f[0] + 0.7f * f[2] + 0.7f * f[4]);
             r = (int)(f[1] + 0.7f * f[2] + 0.7f * f[5]);
         }
-        out[i * 2] = (int16_t)std::clamp(l, -32768, 32767);
-        out[i * 2 + 1] = (int16_t)std::clamp(r, -32768, 32767);
+        pcm[i * 2] = (int16_t)std::clamp(l, -32768, 32767);
+        pcm[i * 2 + 1] = (int16_t)std::clamp(r, -32768, 32767);
     }
+    nladpcm::encode_stereo(st, pcm.data(), frames, packed);   // 4x kleiner als rohes PCM
+    AudioHeader hdr;
+    hdr.frames = (uint16_t)frames;
+    hdr.codec = AUDIO_ADPCM;
     hdr.seq = ++s_audio_seq;
+    msg.resize(sizeof(hdr) + packed.size());
     memcpy(msg.data(), &hdr, sizeof(hdr));
+    memcpy(msg.data() + sizeof(hdr), packed.data(), packed.size());
     std::scoped_lock l(s_peer_mx);
     for (uint64_t id : s_peers) nl_net_send(id, CH_AUDIO, msg.data(), msg.size(), false);
 }
@@ -202,8 +226,9 @@ bool ensure_encoder_locked() {
     g_nl_stream_w = q.w;
     g_nl_stream_h = q.h;
     g_nl_stream_fps = q.fps;
-    s_kbps_max = s_kbps_now = q.kbps;
-    if (!s_encoder.start(q.w, q.h, q.fps, q.kbps, on_packet)) {
+    s_kbps_max = q.kbps;
+    s_kbps_now = q.kbps / 2;   // vorsichtig anfangen, dann hochregeln
+    if (!s_encoder.start(q.w, q.h, q.fps, s_kbps_now, on_packet)) {
         set_status("Video-Encoder konnte nicht starten.");
         return false;
     }
@@ -315,7 +340,12 @@ void net_loop() {
                 }
                 break;
             case MSG_STATS:
-                if (n >= sizeof(Stats)) { Stats st; memcpy(&st, d, sizeof(st)); adapt_bitrate_locked(st); }
+                if (n >= sizeof(Stats) && it != s_clients.end()) {
+                    Stats st;
+                    memcpy(&st, d, sizeof(st));
+                    const uint32_t total = st.frames_ok + st.frames_lost;
+                    if (total >= 5) it->second.loss = std::max(it->second.loss, (float)st.frames_lost / total);
+                }
                 break;
             case MSG_PING:
                 if (n >= sizeof(Ping)) {
@@ -358,6 +388,7 @@ void net_loop() {
             for (auto& [id, c] : s_clients)
                 if (clk::now() - c.last_seen > std::chrono::seconds(8)) dead.push_back(id);
             for (uint64_t id : dead) remove_client_locked(id, true);
+            adapt_bitrate_locked();
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(s_hosting ? 1 : 20));
     }

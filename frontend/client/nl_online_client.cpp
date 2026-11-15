@@ -18,6 +18,7 @@
 #include "../net/nl_proto.h"
 #include "../net/nl_steam.h"
 #include "../net/nl_video.h"
+#include "../net/nl_adpcm.h"
 #include "nl_logo_rgba.h"
 
 #include <algorithm>
@@ -146,8 +147,8 @@ static bool audio_init() {
 }
 
 // Jitter-Puffer: erst ab ~60 ms Vorrat abspielen; laeuft er leer, kurz neu puffern statt zu stottern.
-static constexpr UINT32 kAudioStart = 5;   // Pakete a 12 ms
-static constexpr UINT32 kAudioMax = 14;    // mehr -> Verzoegerung zu gross, Paket verwerfen
+static constexpr UINT32 kAudioStart = 4;   // Pakete a 12 ms (~50 ms Vorrat)
+static constexpr UINT32 kAudioMax = 8;     // mehr (~100 ms) -> Verzoegerung zu gross, Paket verwerfen
 static bool s_audio_started = false;
 static uint32_t s_audio_last_seq = 0;
 static std::atomic<uint32_t> s_audio_underruns{0};
@@ -379,7 +380,13 @@ static void net_loop() {
             if (from != host || n <= sizeof(AudioHeader) || s_screen != Screen::Playing) return;
             AudioHeader ah;
             memcpy(&ah, d, sizeof(ah));
-            audio_play(ah.seq, d + sizeof(AudioHeader), n - sizeof(AudioHeader));
+            if (ah.codec == AUDIO_ADPCM) {
+                static std::vector<int16_t> pcm;
+                if (nladpcm::decode_stereo(d + sizeof(AudioHeader), n - sizeof(AudioHeader), pcm))
+                    audio_play(ah.seq, (const uint8_t*)pcm.data(), pcm.size() * 2);
+            } else {
+                audio_play(ah.seq, d + sizeof(AudioHeader), n - sizeof(AudioHeader));
+            }
         });
 
         if (s_screen == Screen::Playing && host) {

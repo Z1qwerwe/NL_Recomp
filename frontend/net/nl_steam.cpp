@@ -238,11 +238,12 @@ bool nl_steam_init() {
     s_ok = true;
     void* utils = A_Utils();
     U_InitRelay(utils);
-    // Standard ist nur 256 KB/s (~2 Mbit/s) und 512 KB Puffer - viel zu wenig fuer Bild + Ton.
-    // Das liess den Stream nach ein paar Sekunden einfrieren.
-    U_SetGlobalInt(utils, CFG_SEND_RATE_MIN, 512 * 1024);
-    U_SetGlobalInt(utils, CFG_SEND_RATE_MAX, 8 * 1024 * 1024);
-    U_SetGlobalInt(utils, CFG_SEND_BUFFER, 8 * 1024 * 1024);
+    // Standard ist nur 256 KB/s (~2 Mbit/s): der Stream fror ein. Min = Max (so empfiehlt es Valve) ergibt
+    // gleichmaessiges Senden; die eigentliche Datenmenge regelt der Host ueber die Bitrate. Kleiner Puffer,
+    // damit sich bei langsamer Leitung keine Sekunden an Bild aufstauen.
+    U_SetGlobalInt(utils, CFG_SEND_RATE_MIN, 2 * 1024 * 1024);
+    U_SetGlobalInt(utils, CFG_SEND_RATE_MAX, 2 * 1024 * 1024);
+    U_SetGlobalInt(utils, CFG_SEND_BUFFER, 1024 * 1024);
     F_SetRichPresence(s_friends, "nlr", "1");
     F_SetRichPresence(s_friends, "status", "NL Recomp");
     nl_steam_friends();
