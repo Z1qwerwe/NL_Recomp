@@ -301,6 +301,32 @@ static bool drc_rect_now(int* r) {
     return iw > 0;
 }
 
+// Wo ist das TV-Bild im Hauptfenster? (Wiimote-Zeiger mit der Maus)
+bool nl_tv_rect(int* r) {
+    int w = 0, h = 0;
+    WindowSystem::GetWindowPhysSize(w, h);
+    if (w <= 0 || h <= 0) return false;
+    auto fit = [&] {
+        int iw = w, ih = w * 9 / 16;
+        if (ih > h) { ih = h; iw = h * 16 / 9; }
+        r[0] = (w - iw) / 2; r[1] = (h - ih) / 2; r[2] = iw; r[3] = ih;
+    };
+    if (WindowSystem::IsPadWindowOpen()) { fit(); return true; }
+    if (g_nl_screens.mode != 0) {
+        for (int k = 0; k < 4; k++) r[k] = g_nl_screens.tv_rect[k];
+        return r[2] > 0 && r[3] > 0;
+    }
+    if (LatteGPUState.isDRCPrimary) return false;   // nur GamePad sichtbar
+    fit();
+    return true;
+}
+
+bool nl_mouse_pos(int& x, int& y) {
+    x = s_touch_x;
+    y = s_touch_y;
+    return x > 0 || y > 0;
+}
+
 bool nl_point_in_drc(int x, int y) {
     int r[4];
     return drc_rect_now(r) && x >= r[0] && y >= r[1] && x < r[0] + r[2] && y < r[1] + r[3];
@@ -371,7 +397,8 @@ public:
         for (int i = 0; i < kNLActionCount; i++) {
             const auto& b = s_bind[i];
             float x = 0.0f;
-            if ((b.key1 && nl_key_down(b.key1)) || (b.key2 && nl_key_down(b.key2))) x = 1.0f;
+            // Wiimote-Test: Tastatur und Maus gehoeren der Wiimote, das GamePad nur noch dem Controller
+            if (!g_nl.wii_test && ((b.key1 && nl_key_down(b.key1)) || (b.key2 && nl_key_down(b.key2)))) x = 1.0f;
             x = std::max(x, pad_value(pad, b.pad));
             v[i] = x;
         }
@@ -382,7 +409,7 @@ public:
         out.rotation = {val("RS_RIGHT") - val("RS_LEFT"), val("RS_UP") - val("RS_DOWN")};
         // Maus-Kamera: Bewegung seit der letzten Abfrage wirkt wie der rechte Stick
         int dx = s_mouse_dx.exchange(0), dy = s_mouse_dy.exchange(0);
-        const bool mouse_active = g_nl.mouse_camera && !nl_mouse_pointer_mode();
+        const bool mouse_active = g_nl.mouse_camera && !nl_mouse_pointer_mode() && !g_nl.wii_test;
         if (g_nl.free_camera) {
             // Freie Kamera: Maus und rechter Stick neigen das virtuelle GamePad (hoch/runter/links/rechts)
             float wx = s_gyro_wx, wy = s_gyro_wy;
@@ -396,7 +423,7 @@ public:
             wx += out.rotation.x * ks;
             wy -= out.rotation.y * ks * inv;
             // zentrieren: Z, mittlere Maustaste oder Touchpad/Share am Controller
-            if (nl_key_down('Z') || nl_key_down(VK_MBUTTON) || (pad.buttons.GetButtonState(P_TOUCHPAD))) wx = wy = 0.5f;
+            if ((!g_nl.wii_test && (nl_key_down('Z') || nl_key_down(VK_MBUTTON))) || (pad.buttons.GetButtonState(P_TOUCHPAD))) wx = wy = 0.5f;
             s_gyro_wx = std::clamp(wx, 0.02f, 0.98f);
             s_gyro_wy = std::clamp(wy, 0.10f, 0.90f);
         }
@@ -449,6 +476,8 @@ void nl_input_hotplug() {
     auto& im = InputManager::instance();
     static int s_native_tick = 0;
     if (++s_native_tick % 4 == 1) nl_wii_update_native();   // echte Wiimotes alle ~2 s
+    nl_wii_update_motion_mode();   // MotionPlus je nach Minispiel
+    nl_wii_test_update();          // Host spielt selbst als Wiimote (Test)
     auto provider = im.get_api_provider(InputAPI::SDLController);
     if (!provider) return;
     for (auto& pad : provider->get_controllers()) {

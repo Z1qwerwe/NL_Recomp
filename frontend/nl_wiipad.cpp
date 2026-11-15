@@ -270,6 +270,18 @@ private:
     uint8_t m_ext = 0;
 };
 
+// MotionPlus fuer nachgebaute Wiimotes (Controller, Online-Gaeste, Wiimote-Test):
+// Sobald das Spiel MotionPlus sieht, rechnet Nintendo Land den Zeiger aus der Haltung der Wiimote statt aus
+// der Zeigerposition - mit Maus/Stick landet der Klick dann woanders als der Zeiger. Darum MotionPlus nur dort,
+// wo man ihn braucht (Battle Quest: Schwert), sonst eine normale Wiimote + Nunchuk mit Zeiger wie in Cemu.
+static WPADDeviceType wanted_virtual_type() {
+    const int mode = g_nl.wii_motionplus;
+    if (mode == 1) return kWAPDevMPLSFreeStyle;
+    if (mode == 2) return kWAPDevFreestyle;
+    const std::string a = nl_current_attraction();
+    return a.find("Battle Quest") != std::string::npos ? kWAPDevMPLSFreeStyle : kWAPDevFreestyle;
+}
+
 struct Slot {
     bool used = false;
     bool remote = false;
@@ -301,8 +313,9 @@ int nl_wii_attach(const std::string& name, bool remote, NLWiiSource src) {
         wm->set_mapping(WiimoteController::kButtonId_Nunchuck_Down, pad, kAxisYP);
         wm->set_mapping(WiimoteController::kButtonId_Nunchuck_Left, pad, kAxisXN);
         wm->set_mapping(WiimoteController::kButtonId_Nunchuck_Right, pad, kAxisXP);
-        wm->set_device_type(kWAPDevMPLSFreeStyle);   // Wiimote + MotionPlus + Nunchuk
-        s_slots[i] = {true, remote, name, pad};
+        const WPADDeviceType t = wanted_virtual_type();
+        wm->set_device_type(t);   // Wiimote + Nunchuk (+ MotionPlus nur wo noetig)
+        s_slots[i] = {true, remote, name, pad, nullptr, t};
         cemuLog_log(LogType::Force, "Nintendo Land: {} ist Wiimote {}{}", name, i, remote ? " (online)" : "");
         return i;
     }
@@ -349,6 +362,30 @@ NLWiiSlotInfo nl_wii_slot(int slot) {
     }
 #endif
     return info;
+}
+
+void nl_wii_update_motion_mode() {
+    const WPADDeviceType t = wanted_virtual_type();
+    auto& im = InputManager::instance();
+    std::scoped_lock l(s_mx);
+    for (int i = 1; i <= 4; i++) {
+        Slot& sl = s_slots[i];
+        if (!sl.used || !sl.pad || sl.type == t) continue;
+        if (auto wm = std::dynamic_pointer_cast<WiimoteController>(im.get_controller(i))) wm->set_device_type(t);
+        sl.type = t;
+        cemuLog_log(LogType::Force, "NL: Wiimote {} jetzt {}", i, t == kWAPDevMPLSFreeStyle ? "mit MotionPlus" : "ohne MotionPlus");
+    }
+    // alle ~10 s eine Zeile pro nachgebauter Wiimote ins Log (hilft, wenn der Zeiger nicht trifft)
+    static int s_tick = 0;
+    if (++s_tick % 20 != 0) return;
+    for (int i = 1; i <= 4; i++) {
+        Slot& sl = s_slots[i];
+        if (!sl.used || !sl.pad) continue;
+        const glm::vec2 p = sl.pad->get_position();
+        const auto st = sl.pad->status();
+        cemuLog_log(LogType::Force, "NL: Wiimote {} ({}) Zeiger {:.2f}/{:.2f} {} | {} | Quelle {}", i, sl.name, p.x, p.y,
+                    st.pointer ? "sichtbar" : "weg", sl.type == kWAPDevMPLSFreeStyle ? "MotionPlus" : "ohne MotionPlus", st.source);
+    }
 }
 
 int nl_wii_bluetooth_count() {

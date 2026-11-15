@@ -46,6 +46,8 @@ struct NLSettings {
     // Online
     bool wiimote_sideways = true;// Controller als quer gehaltene Wiimote (Steuerkreuz gedreht, Stick steuert mit)
     int stream_quality = 1;      // 0 niedrig (540p), 1 mittel (720p), 2 hoch (720p, mehr Bitrate)
+    int wii_motionplus = 0;      // MotionPlus fuer nachgebaute Wiimotes: 0 nur Battle Quest, 1 immer, 2 nie
+    bool wii_test = false;       // Maus + Tastatur spielen selbst als Wiimote (statt GamePad), zum Ausprobieren
 };
 extern NLSettings g_nl;
 
@@ -160,6 +162,14 @@ NLWiiSlotInfo nl_wii_slot(int slot);
 int nl_wii_free_slots();
 void nl_wii_update_native();   // echte Wiimotes per Bluetooth einhaengen/abmelden (alle paar Sekunden)
 int nl_wii_bluetooth_count();  // gefundene echte Wiimotes (Bluetooth)
+void nl_wii_update_motion_mode(); // MotionPlus an/aus je nach Minispiel (siehe wii_motionplus)
+std::string nl_current_attraction(); // gerade geladenes Minispiel (leer = Plaza)
+void nl_wii_test_update();     // Wiimote-Test des Hosts an/aus (Einstellung wii_test)
+bool nl_tv_rect(int* r);       // TV-Bild im Hauptfenster (Pixel), false wenn nicht sichtbar
+bool nl_mouse_pos(int& x, int& y); // Maus im Hauptfenster (Pixel)
+void nl_wii_test_ui();          // Belegung/Live-Test (ImGui) fuer den Wiimote-Test
+void nl_wii_test_save();
+bool nl_wii_test_capturing();   // gerade wird eine Taste neu belegt
 
 // ---------------------------------------------------------------------------
 // Online (nl_online.cpp): Raum hosten, Bild/Ton streamen, Freunde als Wiimote-Spieler

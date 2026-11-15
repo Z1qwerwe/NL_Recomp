@@ -18,7 +18,7 @@ struct NLInFrame {
     bool focused = false;          // Fenster ist vorne
 };
 
-void nlin_init();
+void nlin_init(bool with_hid = true);   // with_hid=false im Spiel: dort verbindet Cemu die echten Wiimotes
 void nlin_shutdown();
 void nlin_set_gamepad(SDL_Gamepad* pad, const std::string& name);
 // Einmal pro Bild: liest alles und baut das Paket (ohne seq)

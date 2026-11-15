@@ -247,7 +247,7 @@ static void update_mouse(HWND win, LPARAM lp, std::optional<bool> left, std::opt
         return;
     }
     // Klick ins grosse Spielbild (nicht aufs GamePad-Bild) faengt die Maus fuer die Kamera ein
-    if (left && *left && g_nl.mouse_camera && !g_nl_menu_open && !g_nl_mouse_captured && !nl_point_in_drc(x, y)) {
+    if (left && *left && g_nl.mouse_camera && !g_nl.wii_test && !g_nl_menu_open && !g_nl_mouse_captured && !nl_point_in_drc(x, y)) {
         g_nl_mouse_captured = true;
         update_cursor();
         return;
@@ -319,6 +319,7 @@ static void screens_layout(int w, int h, bool drc_big, int* tv, int* drc) {
         tv[k] = drc_big ? sml[k] : bg[k];
         drc[k] = drc_big ? bg[k] : sml[k];
         g_nl_screens.drc_rect[k] = drc[k];
+        g_nl_screens.tv_rect[k] = tv[k];
     }
 }
 

@@ -77,6 +77,8 @@ void nl_settings_load(const std::filesystem::path& path) {
         else if (k == "stream_quality") n.stream_quality = std::clamp(v, 0, 2);
         else if (k == "stick_camera_speed") n.stick_camera_speed = std::clamp(v, 10, 400);
         else if (k == "button_layout2") n.button_layout = std::clamp(v, 0, 2);
+        else if (k == "wii_motionplus") n.wii_motionplus = std::clamp(v, 0, 2);
+        else if (k == "wii_test") n.wii_test = v != 0;
     }
     s_startup = g_nl;
 }
@@ -94,7 +96,8 @@ void nl_settings_save() {
       << "\nbutton_layout2=" << n.button_layout << "\ndeadzone=" << n.deadzone << "\nscreen_layout=" << n.screen_layout
       << "\npip_size=" << n.pip_size << "\nmouse_camera=" << n.mouse_camera << "\nmouse_sens2=" << n.mouse_sens << "\nmouse_invert_y=" << n.mouse_invert_y << "\nfree_camera=" << n.free_camera
       << "\nstick_camera_speed=" << n.stick_camera_speed << "\npad_gyro=" << n.pad_gyro
-      << "\nwiimote_sideways=" << n.wiimote_sideways << "\nstream_quality=" << n.stream_quality << "\n";
+      << "\nwiimote_sideways=" << n.wiimote_sideways << "\nstream_quality=" << n.stream_quality
+      << "\nwii_motionplus=" << n.wii_motionplus << "\nwii_test=" << n.wii_test << "\n";
     GetConfigHandle().Save();
 }
 
@@ -236,6 +239,7 @@ static Row header(const char* label) {
 static std::string s_join_code;                 // getippter Code
 static std::vector<NLFriend> s_friends;         // Freundesliste (jede Sekunde neu)
 static uint64_t s_friends_time = 0;
+static bool s_wii_page = false;                // Wiimote-Belegung & Live-Test (ImGui-Seite)
 static std::string s_online_note;               // kurze Rueckmeldung ("Einladung geschickt")
 
 static void copy_to_clipboard(const std::string& text) {
@@ -464,6 +468,16 @@ static std::vector<Row> build_tab(int tab) {
                 if (w.battery >= 0 && w.battery <= 15) v += "  - Akku fast leer";
                 rows.push_back(info(label, v, help));
             }
+            rows.push_back(onoff("Selbst als Wiimote spielen (Test)", "Zum Ausprobieren: Maus und Tastatur steuern dann eine Wiimote "
+                                 "(wie bei deinen Online-Freunden: Maus = Zeiger, Linksklick = A, Rechtsklick = B ...). "
+                                 "Das GamePad steuerst du solange nur mit dem Controller. Belegung und Live-Test: die Zeile darunter.",
+                                 &n.wii_test, d.wii_test, false, [] { nl_wii_test_update(); }));
+            rows.push_back(button("Wiimote-Belegung & Live-Test", "Oeffnen", "Dieselbe Seite wie in NLOnline: eigene Tasten fuer die Wiimote, "
+                                  "Zeiger und Bewegung live ansehen.", [] { s_wii_page = true; }));
+            rows.push_back(choice("MotionPlus fuer nachgebaute Wiimotes", "Mit MotionPlus rechnet Nintendo Land den Zeiger aus der Haltung der Wiimote "
+                                  "- mit Maus oder Stick trifft der Klick dann nicht genau. 'Nur Battle Quest' schaltet ihn nur dort an, "
+                                  "wo das Schwert ihn braucht. Echte Wiimotes sind davon nicht betroffen.",
+                                  &n.wii_motionplus, {"Nur Battle Quest", "Immer", "Nie"}, d.wii_motionplus));
         }
         rows.push_back(header("Belegung"));
         for (int i = 0; i < kNLActionCount; i++) {
@@ -668,7 +682,22 @@ static bool hit(ImVec2 a, ImVec2 b) {
 }
 static bool clicked(ImVec2 a, ImVec2 b) { return hit(a, b) && ImGui::IsMouseClicked(0); }
 
+static void render_wii_page(int w, int h) {
+    const float u = std::min(w / 1600.0f, h / 900.0f);
+    const float pw = std::min(1200 * u, (float)w - 40), ph = (float)h - 60 * u;
+    ImGui::SetNextWindowPos(ImVec2((w - pw) / 2, 30 * u));
+    ImGui::SetNextWindowSize(ImVec2(pw, ph));
+    ImGui::SetNextWindowBgAlpha(0.96f);
+    ImGui::Begin("Wiimote-Belegung & Live-Test##nl_wii", nullptr, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoMove |
+                 ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoSavedSettings);
+    if (ImGui::Button("Fertig (Esc)")) s_wii_page = false;
+    ImGui::Separator();
+    nl_wii_test_ui();
+    ImGui::End();
+}
+
 static void render_menu(int w, int h) {
+    if (s_wii_page) { render_wii_page(w, h); return; }
     const float u = std::min(w / 1600.0f, h / 900.0f);   // Grundmass
     const float fs_big = std::round(30 * u), fs = std::round(22 * u), fs_small = std::round(16 * u);
     ImFont* f_big = ImGui_GetFont(fs_big);
@@ -1018,7 +1047,11 @@ static void overlay_hook(bool pad_view) {
     bool esc = nl_key_down(VK_ESCAPE);
     bool esc_edge = esc && !s_esc_last;
     s_esc_last = esc;
-    if (nl_pad_menu_pressed() || (esc_edge && s_capture_action < 0)) nl_menu_toggle();
+    if (esc_edge && s_wii_page && g_nl_menu_open) {   // Esc schliesst erst die Wiimote-Seite (oder bricht das Belegen ab)
+        if (!nl_wii_test_capturing()) s_wii_page = false;
+        esc_edge = false;
+    }
+    if (nl_pad_menu_pressed() || (esc_edge && s_capture_action < 0)) { nl_menu_toggle(); s_wii_page = false; }
     int w = 0, h = 0;
     WindowSystem::GetWindowPhysSize(w, h);
     if (w > 0 && h > 0 && !g_nl_menu_open) draw_chat(w, h);

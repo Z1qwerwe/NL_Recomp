@@ -80,6 +80,7 @@ int s_wiimote_index = 0;
 int s_acc_x_sign = -1;            // Wiimote-x (wiibrew: nach links) -> SDL-x (nach rechts)
 int s_mpls_sign[3] = {1, 1, 1};   // pitch, yaw, roll
 bool s_show_pointer = true;
+bool s_hid = true;   // eigener Wiimote-Treiber (nur NLOnline)
 
 SDL_Gamepad* s_pad = nullptr;
 std::string s_pad_name;
@@ -244,12 +245,15 @@ std::string buttons_text(uint16_t b) {
 }  // namespace
 
 // ===========================================================================
-void nlin_init() {
+void nlin_init(bool with_hid) {
     default_binds();
-    nl_hidwii_start();
+    s_hid = with_hid;
+    if (with_hid) nl_hidwii_start();
 }
 
-void nlin_shutdown() { nl_hidwii_stop(); }
+void nlin_shutdown() {
+    if (s_hid) nl_hidwii_stop();
+}
 
 void nlin_set_gamepad(SDL_Gamepad* pad, const std::string& name) {
     std::scoped_lock l(s_mx);
@@ -286,8 +290,8 @@ Input nlin_poll(const NLInFrame& f) {
     Input in;
     in.flags = s_sideways ? IN_SIDEWAYS : 0;
     // echte Wiimote
-    s_wm_ok = s_use_wiimote && nl_hidwii_get(s_wiimote_index, s_wm);
-    if (!s_wm_ok && s_use_wiimote) s_wm_ok = nl_hidwii_get(0, s_wm);
+    s_wm_ok = s_hid && s_use_wiimote && nl_hidwii_get(s_wiimote_index, s_wm);
+    if (!s_wm_ok && s_hid && s_use_wiimote) s_wm_ok = nl_hidwii_get(0, s_wm);
     if (s_wm_ok) {
         in.battery = (uint8_t)std::clamp(s_wm.battery, 0, 100);
         in.ext = (uint8_t)((s_wm.nunchuk ? 1 : 0) | (s_wm.motion_plus ? 2 : 0));
@@ -458,7 +462,13 @@ bool nlin_ui(ImFont* big) {
 
     // ---------------------------------------------------------------- echte Wiimotes
     ImGui::TextColored(accent, "Echte Wiimotes (Bluetooth)");
-    const auto list = nl_hidwii_list();
+    if (!s_hid) {
+        ImGui::TextWrapped("Im Spiel werden echte Wiimotes automatisch als eigene Spieler eingehaengt (Bluetooth koppeln reicht). "
+                           "Ob sie gesehen werden, Zeiger und Akku: im Menue unter Steuerung > Wiimotes.");
+        ImGui::Spacing();
+    }
+    const auto list = s_hid ? nl_hidwii_list() : std::vector<NLHidWiimoteState>{};
+    if (s_hid) {
     {
         std::scoped_lock l(s_mx);
         if (ImGui::Checkbox("Echte Wiimote benutzen, wenn eine verbunden ist", &s_use_wiimote)) changed = true;
@@ -512,6 +522,7 @@ bool nlin_ui(ImFont* big) {
                            "Ohne Sensorleiste zielst du mit der Maus.");
         ImGui::TreePop();
     }
+    }   // s_hid
     ImGui::Spacing();
 
     // ---------------------------------------------------------------- Controller / Maus

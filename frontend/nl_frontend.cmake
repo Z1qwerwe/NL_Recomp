@@ -2,7 +2,8 @@
 # Nutzt Cemus Kern-Bibliotheken (OS, Grafik, Audio, Eingabe) ohne Cemus Oberflaeche.
 set(NL_FRONTEND_DIR ${CMAKE_CURRENT_LIST_DIR})
 
-set(NL_NET_SOURCES ${NL_FRONTEND_DIR}/net/nl_steam.cpp ${NL_FRONTEND_DIR}/net/nl_video.cpp ${NL_FRONTEND_DIR}/net/nl_discord.cpp)
+set(NL_NET_SOURCES ${NL_FRONTEND_DIR}/net/nl_steam.cpp ${NL_FRONTEND_DIR}/net/nl_video.cpp ${NL_FRONTEND_DIR}/net/nl_discord.cpp
+  ${NL_FRONTEND_DIR}/client/nl_client_input.cpp ${NL_FRONTEND_DIR}/client/nl_hid_wiimote.cpp)
 add_executable(NintendoLand ${NL_FRONTEND_DIR}/main.cpp ${NL_FRONTEND_DIR}/nl_input.cpp ${NL_FRONTEND_DIR}/nl_menu.cpp ${NL_FRONTEND_DIR}/nl_det.cpp
   ${NL_FRONTEND_DIR}/nl_wiipad.cpp ${NL_FRONTEND_DIR}/nl_online.cpp ${NL_NET_SOURCES})
 set_source_files_properties(${NL_NET_SOURCES} PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
@@ -36,6 +37,9 @@ set_target_properties(NintendoLand PROPERTIES
 target_link_libraries(NintendoLand PRIVATE
   CemuAudio CemuCafe CemuCommon CemuComponents CemuConfig CemuInput CemuUtil CemuResource imguiImpl
   SDL3::SDL3)
+if(WIN32)
+  target_link_libraries(NintendoLand PRIVATE hid setupapi)
+endif()
 if(UNIX AND NOT APPLE)
   target_link_options(NintendoLand PRIVATE -z noexecstack)
 endif()
@@ -62,8 +66,7 @@ nl_use_steam(NintendoLand)
 if(WIN32)
   set(NL_IMGUI "${CMAKE_SOURCE_DIR}/dependencies/imgui")
   add_executable(NLOnline
-    ${NL_FRONTEND_DIR}/client/nl_online_client.cpp ${NL_FRONTEND_DIR}/client/nl_client_input.cpp
-    ${NL_FRONTEND_DIR}/client/nl_hid_wiimote.cpp ${NL_NET_SOURCES}
+    ${NL_FRONTEND_DIR}/client/nl_online_client.cpp ${NL_NET_SOURCES}
     ${NL_IMGUI}/imgui.cpp ${NL_IMGUI}/imgui_draw.cpp ${NL_IMGUI}/imgui_tables.cpp ${NL_IMGUI}/imgui_widgets.cpp
     ${NL_IMGUI}/backends/imgui_impl_win32.cpp ${NL_IMGUI}/backends/imgui_impl_dx11.cpp
     ${CMAKE_CURRENT_BINARY_DIR}/nl.rc)

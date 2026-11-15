@@ -12,5 +12,7 @@ struct NLScreens {
     bool skip_overlay = false;
     // Zuletzt benutzte GamePad-Flaeche im Hauptfenster (fuer Touch per Maus), w = 0: keine
     int drc_rect[4] = {0, 0, 0, 0};
+    // Zuletzt benutzte TV-Flaeche im Hauptfenster (fuer den Wiimote-Zeiger per Maus), w = 0: keine
+    int tv_rect[4] = {0, 0, 0, 0};
 };
 extern NLScreens g_nl_screens;

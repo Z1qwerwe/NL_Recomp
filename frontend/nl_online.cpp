@@ -6,9 +6,12 @@
 #include "net/nl_video.h"
 #include "net/nl_adpcm.h"
 #include "net/nl_discord.h"
+#include "client/nl_client_input.h"
 
 #include <Windows.h>
 #include <chrono>
+#include <filesystem>
+#include <fstream>
 #include <map>
 #include <mutex>
 #include <thread>
@@ -96,6 +99,34 @@ void system_msg_locked(const std::string& text) {
     chat_broadcast_locked("", text);
 }
 
+// Netz-Paket eines Gastes (oder Wiimote-Test des Hosts) -> Eingaben fuer die Wiimote
+NLWiiIn wii_in_from_net(const Input& in) {
+    NLWiiIn w;
+    w.native = true;
+    w.wbuttons = in.wbuttons;
+    w.nx = in.nx / 32767.0f;
+    w.ny = in.ny / 32767.0f;
+    w.sideways = (in.flags & IN_SIDEWAYS) != 0;
+    w.has_ptr = (in.flags & IN_POINTER) != 0;
+    w.ptr_ir = (in.flags & IN_PTR_IR) != 0;
+    w.px = in.px / 65535.0f;
+    w.py = in.py / 65535.0f;
+    w.source = in.source;
+    w.has_angles = true;
+    w.yaw = in.yaw / 100.0f;
+    w.pitch = in.pitch / 100.0f;
+    w.roll = in.roll / 100.0f;
+    w.shake = in.shake / 255.0f;
+    w.recenter = in.recenter;
+    w.imu_real = (in.flags & IN_IMU_REAL) != 0;
+    for (int k = 0; k < 3; k++) { w.acc[k] = in.acc[k]; w.gyro[k] = in.gyro[k]; }
+    w.sensor_us = in.sensor_us;
+    w.battery = in.battery == 255 ? -1 : in.battery;
+    w.ext = in.ext;
+    w.connected = true;
+    return w;
+}
+
 // ---------------------------------------------------------------- Discord / Minispiel
 std::mutex s_act_mx;
 std::string s_attraction;            // gerade gespieltes Minispiel (leer = Plaza)
@@ -111,6 +142,71 @@ void on_file_open(const char* path) {
     else if (a.empty() && strstr(path, "/Ttl_") && !s_attraction.empty()) { s_attraction.clear(); s_act_dirty = true; }
 }
 
+}  // namespace
+
+std::string nl_current_attraction() {
+    std::scoped_lock l(s_act_mx);
+    return s_attraction;
+}
+
+// ---------------------------------------------------------------- Wiimote-Test des Hosts
+// Maus + Tastatur spielen selbst als Wiimote - genau wie ein Online-Gast (gleiche Belegung, Zeiger, Bewegung).
+static int s_test_slot = -1;
+static std::string test_ini() {
+    wchar_t exe[MAX_PATH];
+    GetModuleFileNameW(nullptr, exe, MAX_PATH);
+    return (std::filesystem::path(exe).parent_path() / "nl_data" / "wiimote_test.ini").string();
+}
+static void test_load() {
+    static bool done = false;
+    if (done) return;
+    done = true;
+    nlin_init(false);   // echte Wiimotes macht im Spiel Cemu
+    std::ifstream f(test_ini());
+    std::string line;
+    while (std::getline(f, line)) {
+        auto eq = line.find('=');
+        if (eq != std::string::npos) nlin_load_kv(line.substr(0, eq), line.substr(eq + 1));
+    }
+}
+void nl_wii_test_save() {
+    std::ofstream f(test_ini());
+    nlin_save(f);
+}
+void nl_wii_test_ui() {
+    test_load();
+    if (nlin_ui(nullptr)) nl_wii_test_save();
+}
+bool nl_wii_test_capturing() { return nlin_capturing(); }
+
+void nl_wii_test_update() {
+    if (g_nl.wii_test && s_test_slot < 0) {
+        test_load();
+        s_test_slot = nl_wii_attach("Du (Maus + Tastatur)", false, []() {
+            NLInFrame f;
+            f.playing = true;
+            f.blocked = g_nl_menu_open;
+            DWORD pid = 0;
+            GetWindowThreadProcessId(GetForegroundWindow(), &pid);
+            f.focused = pid == GetCurrentProcessId();
+            int r[4], mx = 0, my = 0;
+            if (nl_tv_rect(r) && nl_mouse_pos(mx, my) && mx >= r[0] && my >= r[1] && mx < r[0] + r[2] && my < r[1] + r[3]) {
+                f.mouse_on_tv = true;
+                f.mouse_u = (mx - r[0]) / (float)r[2];
+                f.mouse_v = (my - r[1]) / (float)r[3];
+            }
+            NLWiiIn w = wii_in_from_net(nlin_poll(f));
+            w.source = -1;   // Uebersicht: "dieser PC"
+            return w;
+        });
+        if (s_test_slot < 0) g_nl.wii_test = false;   // alle 4 Wiimotes belegt
+    } else if (!g_nl.wii_test && s_test_slot >= 0) {
+        nl_wii_detach(s_test_slot);
+        s_test_slot = -1;
+    }
+}
+
+namespace {
 int local_players() {
     int n = 1;   // GamePad
     for (int i = 1; i <= 4; i++) n += nl_wii_slot(i).used ? 1 : 0;
@@ -423,28 +519,7 @@ void net_loop() {
             c.last_seen = clk::now();
             if (in.seq <= c.input_seq && c.input_seq - in.seq < 1000) return;   // altes Paket
             c.input_seq = in.seq;
-            NLWiiIn w;
-            w.native = true;
-            w.wbuttons = in.wbuttons;
-            w.nx = in.nx / 32767.0f;
-            w.ny = in.ny / 32767.0f;
-            w.sideways = (in.flags & IN_SIDEWAYS) != 0;
-            w.has_ptr = (in.flags & IN_POINTER) != 0;
-            w.ptr_ir = (in.flags & IN_PTR_IR) != 0;
-            w.px = in.px / 65535.0f;
-            w.py = in.py / 65535.0f;
-            w.source = in.source;
-            w.has_angles = true;
-            w.yaw = in.yaw / 100.0f;
-            w.pitch = in.pitch / 100.0f;
-            w.roll = in.roll / 100.0f;
-            w.shake = in.shake / 255.0f;
-            w.recenter = in.recenter;
-            w.imu_real = (in.flags & IN_IMU_REAL) != 0;
-            for (int k = 0; k < 3; k++) { w.acc[k] = in.acc[k]; w.gyro[k] = in.gyro[k]; }
-            w.sensor_us = in.sensor_us;
-            w.battery = in.battery == 255 ? -1 : in.battery;
-            w.ext = in.ext;
+            NLWiiIn w = wii_in_from_net(in);
             if (!c.ptr_logged && (w.has_ptr || w.imu_real)) {   // einmal ins Log: hilft beim Testen
                 c.ptr_logged = true;
                 static const char* kSrc[] = {"Maus + Tastatur", "Controller", "echte Wiimote"};
