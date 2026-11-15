@@ -8,7 +8,7 @@
 
 namespace nlnet {
 
-constexpr uint32_t kVersion = 3;
+constexpr uint32_t kVersion = 4;
 constexpr int kChunk = 1100;   // Nutzdaten pro Video-Stueck (passt in ein UDP-Paket)
 constexpr int kMaxRemote = 4;   // Wiimote 1-4
 
@@ -111,16 +111,43 @@ struct AudioHeader {
 // Controller-Zustand eines Clients. Knoepfe = SDL3-Gamepad-Nummern als Bits
 // (0 unten, 1 rechts, 2 links, 3 oben, 4 Back, 5 Guide, 6 Start, 7/8 Stick-Klick,
 //  9 LB, 10 RB, 11-14 Steuerkreuz hoch/runter/links/rechts, 20 Touchpad)
+// Wiimote-Knoepfe so, wie das Spiel sie kennt (Gast schickt fertige Wiimote-Eingaben,
+// die Belegung stellt jeder Gast selbst in NLOnline ein)
+enum WiiButton : uint16_t {
+    NLW_A = 1 << 0, NLW_B = 1 << 1, NLW_1 = 1 << 2, NLW_2 = 1 << 3, NLW_PLUS = 1 << 4, NLW_MINUS = 1 << 5,
+    NLW_HOME = 1 << 6, NLW_UP = 1 << 7, NLW_DOWN = 1 << 8, NLW_LEFT = 1 << 9, NLW_RIGHT = 1 << 10,
+    NLW_C = 1 << 11, NLW_Z = 1 << 12,
+};
+
+// Woher die Eingaben des Gastes kommen (fuer die Uebersicht beim Host)
+enum InputSource : uint8_t { SRC_KEYBOARD = 0, SRC_CONTROLLER = 1, SRC_WIIMOTE = 2 };
+
 struct Input {
     uint32_t seq = 0;
-    uint32_t buttons = 0;
-    int16_t lx = 0, ly = 0, rx = 0, ry = 0;   // SDL-Konvention: y nach unten positiv
-    uint8_t lt = 0, rt = 0;                   // 0..255
-    uint8_t flags = 0;                        // Bit 0: Wiimote quer halten, Bit 1: Zeiger gueltig
-    uint16_t px = 0, py = 0;                  // Zeiger auf dem Bild, 0..65535
+    uint16_t wbuttons = 0;                    // WiiButton-Bits
+    int16_t nx = 0, ny = 0;                   // Nunchuk-Stick, y nach OBEN positiv
+    uint16_t px = 32768, py = 32768;          // Zeiger auf dem TV-Bild, 0..65535
+    uint8_t flags = 0;                        // InputFlags
+    uint8_t source = SRC_KEYBOARD;
+    // Bewegung ohne echte Sensoren (Maus/Stick/Tasten): gewuenschte Haltung der Wiimote
+    int16_t yaw = 0, pitch = 0, roll = 0;     // 1/100 Grad; yaw + = rechts, pitch + = hoch, roll + = rechts
+    uint8_t shake = 0;                        // 0..255 Schuetteln
+    uint8_t recenter = 0;                     // zaehlt hoch, wenn der Gast "Zentrieren" drueckt
+    // echte Sensoren (Controller-Gyro oder echte Wiimote), SDL-Achsen: x rechts, y oben, z zum Spieler
+    float acc[3] = {0, 0, 0};                 // m/s^2 (in Ruhe flach: 0, 9.81, 0)
+    float gyro[3] = {0, 0, 0};                // rad/s
+    uint32_t sensor_us = 0;                   // Zeitstempel der Sensorwerte (Gast-Uhr)
+    // Status der echten Wiimote des Gastes (Uebersicht beim Host)
+    uint8_t battery = 255;                    // 0..100, 255 = unbekannt/keine Wiimote
+    uint8_t ext = 0;                          // Bit 0 Nunchuk, Bit 1 MotionPlus
 };
 #pragma pack(pop)
 
-enum InputFlags : uint8_t { IN_SIDEWAYS = 1, IN_POINTER = 2 };
+enum InputFlags : uint8_t {
+    IN_SIDEWAYS = 1,    // quer gehalten (Steuerkreuz gedreht)
+    IN_POINTER = 2,     // Zeiger gueltig (Maus auf dem Bild / Sensorleiste gesehen / Stick)
+    IN_IMU_REAL = 4,    // acc/gyro sind echte Sensorwerte
+    IN_PTR_IR = 8,      // Zeiger kommt von der Kamera einer echten Wiimote
+};
 
 }  // namespace nlnet

@@ -106,9 +106,21 @@ def step_shaders(settings, game, log, progress, stop):
     shaders.translate_shaders(cache, settings["shader_translator"], log, progress, stop)
 
 
+_UNIX_TOOL_DIRS = ("devkitpro", "msys64", "msys2", "cygwin", "mingw64", "mingw32", "git\\usr\\bin")
+
+
+def _clean_env():
+    """PATH ohne MSYS2/devkitPro/Cygwin: deren cmake/link/gcc stoeren den Visual-Studio-Build."""
+    env = dict(os.environ)
+    parts = [d for d in env.get("PATH", "").split(os.pathsep)
+             if not any(t in d.lower() for t in _UNIX_TOOL_DIRS)]
+    env["PATH"] = os.pathsep.join(parts)
+    return env
+
+
 def _run(cmd, log, cwd=None, stop=lambda: False):
     log(f"> {cmd if isinstance(cmd, str) else ' '.join(cmd)}")
-    p = subprocess.Popen(cmd, cwd=cwd, shell=isinstance(cmd, str),
+    p = subprocess.Popen(cmd, cwd=cwd, shell=isinstance(cmd, str), env=_clean_env(),
                          stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     for line in p.stdout:
         log("  " + line.rstrip())
@@ -143,18 +155,41 @@ def step_recompile(settings, game, log, stop):
     log(f"C++-Code liegt in {out}")
 
 
+def _cmake_has_vs(path):
+    """True, wenn dieses CMake Visual-Studio-Projekte erzeugen kann.
+    Ein CMake aus MSYS2/devkitPro/Cygwin steht oft zuerst im PATH, kann das aber nicht."""
+    try:
+        out = subprocess.run([path, "--help"], capture_output=True, text=True, timeout=20,
+                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout
+    except Exception:
+        return False
+    return "Visual Studio 17 2022" in out
+
+
 def _find_cmake():
-    c = shutil.which("cmake")
-    if c:
-        return c
-    # CMake, das bei Visual Studio dabei ist
     import glob
+    cands = []
+    # 1. CMake, das bei Visual Studio dabei ist (passt immer zum Compiler)
     for pf in (os.environ.get("ProgramFiles", r"C:\Program Files"),
                os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")):
-        hits = glob.glob(os.path.join(pf, "Microsoft Visual Studio", "*", "*", "Common7", "IDE",
-                                      "CommonExtensions", "Microsoft", "CMake", "CMake", "bin", "cmake.exe"))
-        if hits:
-            return sorted(hits)[-1]
+        cands += sorted(glob.glob(os.path.join(pf, "Microsoft Visual Studio", "*", "*", "Common7", "IDE",
+                                               "CommonExtensions", "Microsoft", "CMake", "CMake", "bin",
+                                               "cmake.exe")), reverse=True)
+    # 2. alle cmake.exe im PATH (nicht nur das erste)
+    for d in os.environ.get("PATH", "").split(os.pathsep):
+        c = os.path.join(d.strip('"'), "cmake.exe")
+        if os.path.isfile(c):
+            cands.append(c)
+    # 3. normale CMake-Installation
+    cands.append(os.path.join(os.environ.get("ProgramFiles", r"C:\Program Files"), "CMake", "bin", "cmake.exe"))
+    seen = set()
+    for c in cands:
+        k = os.path.normcase(os.path.abspath(c))
+        if k in seen or not os.path.isfile(c):
+            continue
+        seen.add(k)
+        if _cmake_has_vs(c):
+            return c
     return None
 
 

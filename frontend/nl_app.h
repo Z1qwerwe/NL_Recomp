@@ -119,21 +119,47 @@ bool nl_key_down(uint32_t vk);
 // Wiimote-Spieler 2-5 aus normalen Controllern (nl_wiipad.cpp)
 // ---------------------------------------------------------------------------
 struct NLWiiIn {
-    uint32_t buttons = 0;                 // SDL3-Gamepad-Knopfnummern als Bits
+    uint32_t buttons = 0;                 // SDL3-Gamepad-Knopfnummern als Bits (lokale Controller)
     float lx = 0, ly = 0, rx = 0, ry = 0; // -1..1, y nach unten positiv (wie SDL)
     float lt = 0, rt = 0;                 // 0..1
     bool sideways = true;                 // Wiimote quer halten
-    bool has_ptr = false;                 // Zeiger direkt gesetzt (Maus des Gastes), 0..1
+    bool has_ptr = false;                 // Zeiger direkt gesetzt (Gast), 0..1
     float px = 0.5f, py = 0.5f;
     bool connected = true;
+    // --- Online-Gast: fertige Wiimote-Eingaben (eigene Tastenbelegung im NLOnline)
+    bool native = false;                  // true: wbuttons/nx/ny statt buttons/lx/ly
+    uint16_t wbuttons = 0;                // nlnet::WiiButton-Bits
+    float nx = 0, ny = 0;                 // Nunchuk-Stick, y nach oben positiv
+    float yaw = 0, pitch = 0, roll = 0;   // gewuenschte Haltung in Grad (ohne echte Sensoren)
+    bool has_angles = false;
+    float shake = 0;                      // 0..1
+    uint8_t recenter = 0;
+    bool imu_real = false;                // echte Sensorwerte (SDL-Achsen, m/s^2 und rad/s)
+    float acc[3] = {0, 9.81f, 0}, gyro[3] = {0, 0, 0};
+    uint32_t sensor_us = 0;
+    bool ptr_ir = false;                  // Zeiger von der Kamera einer echten Wiimote
+    int source = -1;                      // nlnet::InputSource beim Gast, -1 = lokal
+    int battery = -1;                     // echte Wiimote des Gastes, 0..100
+    uint8_t ext = 0;                      // Bit 0 Nunchuk, Bit 1 MotionPlus
 };
 using NLWiiSource = std::function<NLWiiIn()>;
-struct NLWiiSlotInfo { bool used = false; bool remote = false; std::string name; };
+struct NLWiiSlotInfo {
+    bool used = false;
+    bool remote = false;
+    std::string name;
+    std::string kind;          // "Controller", "Wiimote (Bluetooth)", "Online-Gast" ...
+    std::string device;        // womit gespielt wird (z.B. "Maus + Tastatur", "echte Wiimote")
+    bool pointer_seen = false; // Zeiger kommt gerade an
+    bool motion = false;       // Bewegung (Gyro/MotionPlus) kommt an
+    bool nunchuk = false, motion_plus = false;
+    int battery = -1;          // 0..100, -1 unbekannt
+};
 int nl_wii_attach(const std::string& name, bool remote, NLWiiSource src);   // 1-4 oder -1 (voll)
 void nl_wii_detach(int slot);
 NLWiiSlotInfo nl_wii_slot(int slot);
 int nl_wii_free_slots();
 void nl_wii_update_native();   // echte Wiimotes per Bluetooth einhaengen/abmelden (alle paar Sekunden)
+int nl_wii_bluetooth_count();  // gefundene echte Wiimotes (Bluetooth)
 
 // ---------------------------------------------------------------------------
 // Online (nl_online.cpp): Raum hosten, Bild/Ton streamen, Freunde als Wiimote-Spieler

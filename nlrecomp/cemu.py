@@ -371,12 +371,25 @@ def _patch_all(cemu_dir, log):
 def configure_and_build(cemu_dir, build_dir, aot_dir, generated_dir, cmake, run, log, jobs="4"):
     git = find_git()
     env = git_env(git) if git else dict(os.environ)
+    # MSYS2/devkitPro/Cygwin aus dem PATH: deren cmake/link/gcc stoeren den Visual-Studio-Build
+    bad = ("devkitpro", "msys64", "msys2", "cygwin", "mingw64", "mingw32")
+    env["PATH"] = os.pathsep.join(d for d in env.get("PATH", "").split(os.pathsep)
+                                  if not any(t in d.lower() for t in bad))
     to_cm = lambda p: p.replace("\\", "/")  # noqa: E731
     args = [cmake, "-S", cemu_dir, "-B", build_dir,
             f"-DNL_AOT_DIR={to_cm(aot_dir)}", f"-DNL_AOT_GENERATED={to_cm(generated_dir)}",
             "-DENABLE_DISCORD_RPC=OFF"]
     if os.name == "nt":
         args += ["-G", "Visual Studio 17 2022", "-A", "x64"]
+        # Ein frueherer Versuch mit falschem CMake kann einen kaputten Cache hinterlassen
+        cache = os.path.join(build_dir, "CMakeCache.txt")
+        if os.path.isfile(cache):
+            with open(cache, encoding="utf-8", errors="replace") as f:
+                txt = f.read()
+            if "CMAKE_GENERATOR:INTERNAL=Visual Studio 17 2022" not in txt:
+                log("Alter CMake-Cache passt nicht (anderer Generator) - wird geloescht.")
+                os.remove(cache)
+                shutil.rmtree(os.path.join(build_dir, "CMakeFiles"), ignore_errors=True)
     log("Konfiguriere Cemu (beim ersten Mal laedt vcpkg alle Abhaengigkeiten, 20-60 Minuten) ...")
     run(args, env=env)
     log("Baue NintendoLand.exe (eigenes Programm mit nativem Spielcode) ...")

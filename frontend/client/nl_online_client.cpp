@@ -21,6 +21,8 @@
 #include "../net/nl_adpcm.h"
 #include "../net/nl_discord.h"
 #include "nl_logo_rgba.h"
+#include "nl_client_input.h"
+#include "nl_hid_wiimote.h"
 
 #include <algorithm>
 #include <atomic>
@@ -72,7 +74,7 @@ static bool s_frame_new = false;
 // Eingabe (Hauptthread schreibt, Netz-Thread schickt)
 static std::mutex s_in_mx;
 static Input s_input;
-static std::atomic<bool> s_sideways{true};
+static std::atomic<bool> s_controls_open{false};   // Steuerungs-Seite offen
 static std::atomic<bool> s_overlay{false};   // Esc-Menue offen -> keine Eingaben ans Spiel
 
 static std::string s_code_buf;              // getippter Code
@@ -122,14 +124,15 @@ static void load_settings() {
         auto eq = line.find('=');
         if (eq == std::string::npos) continue;
         std::string k = line.substr(0, eq), v = line.substr(eq + 1);
-        if (k == "sideways") s_sideways = v != "0";
-        else if (k == "view") s_view = std::clamp(atoi(v.c_str()), 0, (int)VIEW_COUNT - 1);
+        if (nlin_load_kv(k, v)) continue;
+        if (k == "view") s_view = std::clamp(atoi(v.c_str()), 0, (int)VIEW_COUNT - 1);
         else if (k == "last_code") s_code_buf = nl_normalize_code(v);
     }
 }
 static void save_settings() {
     std::ofstream f(s_ini);
-    f << "sideways=" << (s_sideways ? 1 : 0) << "\nview=" << s_view.load() << "\nlast_code=" << s_code_buf << "\n";
+    f << "view=" << s_view.load() << "\nlast_code=" << s_code_buf << "\n";
+    nlin_save(f);
 }
 
 // ===========================================================================
@@ -417,9 +420,7 @@ static void net_loop() {
                     std::scoped_lock l(s_in_mx);
                     in = s_input;
                 }
-                if (s_overlay || s_chat_open) in = Input{};
                 in.seq = ++input_seq;
-                in.flags = (uint8_t)((in.flags & IN_POINTER) | (s_sideways ? IN_SIDEWAYS : 0));
                 nl_net_send(host, CH_INPUT, &in, sizeof(in), false);
             }
             if (clk::now() - last_stats > std::chrono::seconds(1)) {
@@ -478,6 +479,7 @@ static void pad_open_first() {
         s_pad = SDL_OpenGamepad(ids[0]);
         const char* n = s_pad ? SDL_GetGamepadName(s_pad) : nullptr;
         s_pad_name = n ? n : "Controller";
+        nlin_set_gamepad(s_pad, s_pad_name);
     }
     SDL_free(ids);
 }
@@ -490,53 +492,17 @@ static void poll_input(HWND hwnd) {
             SDL_CloseGamepad(s_pad);
             s_pad = nullptr;
             s_pad_name.clear();
+            nlin_set_gamepad(nullptr, "");
             pad_open_first();
         }
     }
     SDL_UpdateGamepads();
-    Input in;
-    if (s_pad) {
-        for (int b = 0; b < 21; b++)
-            if (SDL_GetGamepadButton(s_pad, (SDL_GamepadButton)b)) in.buttons |= 1u << b;
-        in.lx = SDL_GetGamepadAxis(s_pad, SDL_GAMEPAD_AXIS_LEFTX);
-        in.ly = SDL_GetGamepadAxis(s_pad, SDL_GAMEPAD_AXIS_LEFTY);
-        in.rx = SDL_GetGamepadAxis(s_pad, SDL_GAMEPAD_AXIS_RIGHTX);
-        in.ry = SDL_GetGamepadAxis(s_pad, SDL_GAMEPAD_AXIS_RIGHTY);
-        in.lt = (uint8_t)std::clamp(SDL_GetGamepadAxis(s_pad, SDL_GAMEPAD_AXIS_LEFT_TRIGGER) / 128, 0, 255);
-        in.rt = (uint8_t)std::clamp(SDL_GetGamepadAxis(s_pad, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) / 128, 0, 255);
-    }
-    // Tastatur, solange das Fenster vorne ist
-    if (GetForegroundWindow() == hwnd) {
-        auto k = [](int vk) { return (GetAsyncKeyState(vk) & 0x8000) != 0; };
-        auto btn = [&](int bit, bool on) { if (on) in.buttons |= 1u << bit; };
-        btn(0, k(VK_SPACE) || k('J'));       // unten  -> A / 2
-        btn(1, k('K'));                      // rechts -> 1
-        btn(2, k('L'));                      // links  -> B
-        btn(3, k('I'));                      // oben   -> C
-        btn(4, k(VK_BACK));                  // -
-        btn(6, k(VK_RETURN));                // +
-        btn(9, k('Q'));                      // C
-        btn(10, k('E'));                     // B
-        btn(11, k(VK_UP));
-        btn(12, k(VK_DOWN));
-        btn(13, k(VK_LEFT));
-        btn(14, k(VK_RIGHT));
-        if (k('W')) in.ly = -32767;
-        if (k('S')) in.ly = 32767;
-        if (k('A')) in.lx = -32767;
-        if (k('D')) in.lx = 32767;
-        if (k(VK_SHIFT)) in.lt = 255;        // Z
-        if (k(VK_CONTROL)) in.rt = 255;      // B
-        // Maus als Wiimote-Zeiger: Linksklick = A, Rechtsklick = B
-        float u, v;
-        if (s_screen == Screen::Playing && !s_overlay && mouse_on_video(hwnd, u, v)) {
-            in.flags |= IN_POINTER;
-            in.px = (uint16_t)std::clamp((int)(u * 65535), 0, 65535);
-            in.py = (uint16_t)std::clamp((int)(v * 65535), 0, 65535);
-            btn(0, k(VK_LBUTTON));
-            btn(2, k(VK_RBUTTON));
-        }
-    }
+    NLInFrame f;
+    f.playing = s_screen == Screen::Playing;
+    f.blocked = s_overlay || s_chat_open || s_controls_open;
+    f.focused = GetForegroundWindow() == hwnd;
+    f.mouse_on_tv = f.playing && !f.blocked && mouse_on_video(hwnd, f.mouse_u, f.mouse_v);
+    Input in = nlin_poll(f);
     std::scoped_lock l(s_in_mx);
     s_input = in;
 }
@@ -652,12 +618,15 @@ static void toggle_fullscreen(HWND hwnd) {
 }
 
 static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
-    if (msg == WM_SETCURSOR && LOWORD(lp) == HTCLIENT && s_screen == Screen::Playing && !s_overlay) {
-        float u, v;
-        if (mouse_on_video(hwnd, u, v)) { SetCursor(nullptr); return TRUE; }   // das Spiel zeigt seinen eigenen Zeiger
+    if (msg == WM_SETCURSOR && LOWORD(lp) == HTCLIENT && s_screen == Screen::Playing && !s_overlay && !s_controls_open) {
+        float u, v, pu, pv;
+        bool ir;
+        if (mouse_on_video(hwnd, u, v) && nlin_pointer(pu, pv, ir)) { SetCursor(nullptr); return TRUE; }   // eigener Wii-Zeiger
     }
+    if (msg == WM_KEYDOWN && wp == VK_ESCAPE && nlin_capturing()) return 0;   // bricht nur das Neu-Belegen ab
+    if (msg == WM_KEYDOWN && wp == VK_ESCAPE && s_controls_open) { s_controls_open = false; save_settings(); return 0; }
     if (msg == WM_CHAR && s_chat_skip_char) { s_chat_skip_char = false; return 0; }   // das 'y' der Oeffnen-Taste
-    if (msg == WM_KEYDOWN && s_screen == Screen::Playing && !s_overlay && !s_chat_open && wp == 'Y') {
+    if (msg == WM_KEYDOWN && s_screen == Screen::Playing && !s_overlay && !s_chat_open && !s_controls_open && wp == 'Y') {
         s_chat_open = true;
         s_chat_focus = true;
         s_chat_skip_char = true;
@@ -665,7 +634,7 @@ static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     }
     if (msg == WM_KEYDOWN && s_chat_open && wp == VK_ESCAPE) { s_chat_open = false; return 0; }
-    if (msg == WM_KEYDOWN && wp == VK_TAB && s_screen == Screen::Playing && !s_chat_open && !(lp & (1 << 30))) {
+    if (msg == WM_KEYDOWN && wp == VK_TAB && s_screen == Screen::Playing && !s_chat_open && !s_controls_open && !(lp & (1 << 30))) {
         s_view = (s_view + 1) % VIEW_COUNT;
         s_view_changed = std::chrono::steady_clock::now();
         save_settings();
@@ -802,11 +771,16 @@ static void ui_home(ImVec2 size, ImFont* big) {
     ImGui::Spacing();
     ImGui::Separator();
     ImGui::Spacing();
-    bool sw = s_sideways;
-    if (ImGui::Checkbox("Wiimote quer halten", &sw)) { s_sideways = sw; save_settings(); }
+    bool sw = nlin_sideways();
+    if (ImGui::Checkbox("Wiimote quer halten", &sw)) { nlin_set_sideways(sw); save_settings(); }
     ImGui::TextDisabled("An: fuer Mario Chase, Luigi's Mansion, Animal Crossing.\nAus: Wiimote aufrecht mit Nunchuk.");
     ImGui::Spacing();
-    ImGui::TextDisabled("Controller: %s", s_pad_name.empty() ? "keiner (Tastatur: WASD, Leertaste, K, L, I)" : s_pad_name.c_str());
+    {
+        const auto wms = nl_hidwii_list();
+        ImGui::TextDisabled("Controller: %s", s_pad_name.empty() ? "keiner" : s_pad_name.c_str());
+        ImGui::TextDisabled("Echte Wiimotes: %d verbunden", (int)wms.size());
+    }
+    if (ImGui::Button("Steuerung & Wiimotes", ImVec2(-1, 46))) s_controls_open = true;
     ImGui::EndChild();
 
     ImGui::SameLine();
@@ -838,6 +812,20 @@ static void ui_home(ImVec2 size, ImFont* big) {
     }
     ImGui::EndChild();
     ImGui::TextDisabled("Angemeldet als %s   |   F11: Vollbild   |   Im Spiel: Esc Menue, Y Chat, Tab Ansicht", nl_steam_my_name().c_str());
+    ImGui::End();
+}
+
+static void ui_controls(ImVec2 size, ImFont* big) {
+    const float pw = (std::min)(1100.0f, size.x - 40), ph = size.y - 40;
+    ImGui::SetNextWindowPos(ImVec2((size.x - pw) / 2, 20));
+    ImGui::SetNextWindowSize(ImVec2(pw, ph));
+    ImGui::Begin("##controls", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings);
+    ImGui::BeginChild("##controls_scroll", ImVec2(0, ph - 90), false);
+    if (nlin_ui(big)) save_settings();
+    ImGui::EndChild();
+    if (accent_button("Fertig", ImVec2(220, 50))) { s_controls_open = false; save_settings(); }
+    ImGui::SameLine();
+    ImGui::TextDisabled("Esc: zurueck");
     ImGui::End();
 }
 
@@ -909,6 +897,19 @@ static void ui_playing(ImVec2 size, ImFont* big) {
         // Maus als Wiimote-Zeiger gilt nur fuer das TV-Bild
         if (view == VIEW_PAD) { s_vid_x0 = s_vid_y0 = s_vid_x1 = s_vid_y1 = 0; }
         else { s_vid_x0 = tv0.x; s_vid_y0 = tv0.y; s_vid_x1 = tv1.x; s_vid_y1 = tv1.y; }
+        // eigener Wii-Zeiger (Hand-Kreis wie auf der Wii) - das Spiel zeigt den Zeiger der Gaeste nicht immer
+        float pu, pv;
+        bool from_ir = false;
+        if (view != VIEW_PAD && !s_overlay && !s_controls_open && nlin_pointer(pu, pv, from_ir)) {
+            const ImVec2 c(tv0.x + pu * (tv1.x - tv0.x), tv0.y + pv * (tv1.y - tv0.y));
+            const float r = (std::max)(9.0f, (tv1.y - tv0.y) * 0.018f);
+            bg->AddCircleFilled(ImVec2(c.x + 2, c.y + 3), r + 3, col(0, 0, 0, 70), 24);
+            bg->AddCircleFilled(c, r + 3, col(255, 255, 255, 240), 24);
+            bg->AddCircleFilled(c, r, C_ACCENT, 24);
+            bg->AddCircleFilled(c, r * 0.35f, col(255, 255, 255, 255), 12);
+            const std::string tag = "P" + std::to_string(s_slot.load() + 1);
+            bg->AddText(ImVec2(c.x + r + 6, c.y - r - 4), col(255, 255, 255, 230), tag.c_str());
+        }
         // kurz anzeigen, welche Ansicht gewaehlt wurde
         const float since = std::chrono::duration<float>(std::chrono::steady_clock::now() - s_view_changed).count();
         if (has_pad && since < 2.0f) {
@@ -986,8 +987,9 @@ static void ui_playing(ImVec2 size, ImFont* big) {
     ImGui::TextDisabled("Bei %s - du bist Wiimote %d", host_name.c_str(), s_slot.load());
     ImGui::Spacing();
     if (accent_button("Weiterspielen", ImVec2(-1, 52))) s_overlay = false;
-    bool sw = s_sideways;
-    if (ImGui::Checkbox("Wiimote quer halten", &sw)) { s_sideways = sw; save_settings(); }
+    bool sw = nlin_sideways();
+    if (ImGui::Checkbox("Wiimote quer halten", &sw)) { nlin_set_sideways(sw); save_settings(); }
+    if (ImGui::Button("Steuerung & Wiimotes", ImVec2(-1, 44))) { s_controls_open = true; s_overlay = false; }
     {
         int v = s_view;
         ImGui::SetNextItemWidth(-1);
@@ -1008,6 +1010,7 @@ int main(int argc, char* argv[]) {
     wchar_t exe[MAX_PATH];
     GetModuleFileNameW(nullptr, exe, MAX_PATH);
     s_ini = std::filesystem::path(exe).parent_path() / "NLOnline.ini";
+    nlin_init();   // Standard-Belegung + Wiimote-Suche, danach die gespeicherte Belegung laden
     load_settings();
 
     std::string join_arg;
@@ -1094,7 +1097,7 @@ int main(int argc, char* argv[]) {
         poll_input(hwnd);
         upload_frame();
 
-        if (s_screen == Screen::Playing && !s_overlay) io.ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
+        if (s_screen == Screen::Playing && !s_overlay && !s_controls_open) io.ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
         else io.ConfigFlags &= ~ImGuiConfigFlags_NoMouseCursorChange;
         ImGui_ImplDX11_NewFrame();
         ImGui_ImplWin32_NewFrame();
@@ -1102,7 +1105,10 @@ int main(int argc, char* argv[]) {
         const ImVec2 size = io.DisplaySize;
         const Screen scr = s_screen;
         if (scr != Screen::Playing) draw_background(ImGui::GetBackgroundDrawList(), size);
-        if (!steam) {
+        if (s_controls_open) {
+            if (scr == Screen::Playing) ui_playing(size, big);   // Spiel laeuft im Hintergrund weiter
+            ui_controls(size, big);
+        } else if (!steam) {
             ui_message(size, big, "Steam laeuft nicht",
                        nl_steam_available() ? "Online laeuft ueber Steam (Freundesliste, Codes, Verbindung). Starte Steam und dann NLOnline neu."
                                             : "steam_api64.dll fehlt neben NLOnline.exe. Entpacke das ZIP bitte komplett.",
@@ -1146,6 +1152,7 @@ int main(int argc, char* argv[]) {
     if (s_voice) s_voice->DestroyVoice();
     if (s_master) s_master->DestroyVoice();
     if (s_xa) s_xa->Release();
+    nlin_shutdown();
     if (s_pad) SDL_CloseGamepad(s_pad);
     SDL_Quit();
     nl_discord_stop();

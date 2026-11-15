@@ -62,12 +62,13 @@ nl_use_steam(NintendoLand)
 if(WIN32)
   set(NL_IMGUI "${CMAKE_SOURCE_DIR}/dependencies/imgui")
   add_executable(NLOnline
-    ${NL_FRONTEND_DIR}/client/nl_online_client.cpp ${NL_NET_SOURCES}
+    ${NL_FRONTEND_DIR}/client/nl_online_client.cpp ${NL_FRONTEND_DIR}/client/nl_client_input.cpp
+    ${NL_FRONTEND_DIR}/client/nl_hid_wiimote.cpp ${NL_NET_SOURCES}
     ${NL_IMGUI}/imgui.cpp ${NL_IMGUI}/imgui_draw.cpp ${NL_IMGUI}/imgui_tables.cpp ${NL_IMGUI}/imgui_widgets.cpp
     ${NL_IMGUI}/backends/imgui_impl_win32.cpp ${NL_IMGUI}/backends/imgui_impl_dx11.cpp
     ${CMAKE_CURRENT_BINARY_DIR}/nl.rc)
   target_include_directories(NLOnline PRIVATE ${NL_IMGUI} ${NL_FRONTEND_DIR})
-  target_link_libraries(NLOnline PRIVATE SDL3::SDL3 d3d11 dxgi xaudio2 mfplat mfuuid wmcodecdspuuid ole32)
+  target_link_libraries(NLOnline PRIVATE SDL3::SDL3 d3d11 dxgi xaudio2 mfplat mfuuid wmcodecdspuuid ole32 hid setupapi)
   set_target_properties(NLOnline PROPERTIES
     CXX_STANDARD 20
     MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>"

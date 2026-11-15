@@ -298,6 +298,8 @@ void handle_hello_locked(uint64_t from, const Hello& h) {
             std::scoped_lock li(s_in_mx);
             NLWiiIn idle;
             idle.sideways = true;
+            idle.native = true;
+            idle.source = SRC_KEYBOARD;
             s_inputs[from] = idle;
         }
         const int slot = nl_wii_attach(name, true, [from]() {
@@ -422,18 +424,33 @@ void net_loop() {
             if (in.seq <= c.input_seq && c.input_seq - in.seq < 1000) return;   // altes Paket
             c.input_seq = in.seq;
             NLWiiIn w;
-            w.buttons = in.buttons;
-            w.lx = in.lx / 32767.0f; w.ly = in.ly / 32767.0f;
-            w.rx = in.rx / 32767.0f; w.ry = in.ry / 32767.0f;
-            w.lt = in.lt / 255.0f; w.rt = in.rt / 255.0f;
+            w.native = true;
+            w.wbuttons = in.wbuttons;
+            w.nx = in.nx / 32767.0f;
+            w.ny = in.ny / 32767.0f;
             w.sideways = (in.flags & IN_SIDEWAYS) != 0;
             w.has_ptr = (in.flags & IN_POINTER) != 0;
-            if (w.has_ptr && !c.ptr_logged) {   // einmal ins Log: hilft beim Testen des Maus-Zeigers
-                c.ptr_logged = true;
-                cemuLog_log(LogType::Force, "Online: {} zielt mit der Maus (Wiimote {})", c.name, c.slot);
-            }
+            w.ptr_ir = (in.flags & IN_PTR_IR) != 0;
             w.px = in.px / 65535.0f;
             w.py = in.py / 65535.0f;
+            w.source = in.source;
+            w.has_angles = true;
+            w.yaw = in.yaw / 100.0f;
+            w.pitch = in.pitch / 100.0f;
+            w.roll = in.roll / 100.0f;
+            w.shake = in.shake / 255.0f;
+            w.recenter = in.recenter;
+            w.imu_real = (in.flags & IN_IMU_REAL) != 0;
+            for (int k = 0; k < 3; k++) { w.acc[k] = in.acc[k]; w.gyro[k] = in.gyro[k]; }
+            w.sensor_us = in.sensor_us;
+            w.battery = in.battery == 255 ? -1 : in.battery;
+            w.ext = in.ext;
+            if (!c.ptr_logged && (w.has_ptr || w.imu_real)) {   // einmal ins Log: hilft beim Testen
+                c.ptr_logged = true;
+                static const char* kSrc[] = {"Maus + Tastatur", "Controller", "echte Wiimote"};
+                cemuLog_log(LogType::Force, "Online: {} spielt mit {} (Wiimote {}){}{}", c.name, kSrc[std::min<int>(in.source, 2)], c.slot,
+                            w.has_ptr ? ", Zeiger kommt an" : "", w.imu_real ? ", echte Bewegungssensoren" : "");
+            }
             w.connected = true;
             std::scoped_lock li(s_in_mx);
             s_inputs[from] = w;

@@ -438,6 +438,33 @@ static std::vector<Row> build_tab(int tab) {
         rows.push_back(percent("Maus-Empfindlichkeit", "Wie schnell sich die Kamera mit der Maus dreht.", &n.mouse_sens, d.mouse_sens, 10, 1000, 10));
         rows.push_back(onoff("Maus hoch/runter umkehren", "Maus nach oben = nach unten schauen (wie bei Flugspielen).", &n.mouse_invert_y, d.mouse_invert_y));
         rows.push_back(percent("Stick-Totzone", "Wie weit der Stick bewegt werden muss, bevor das Spiel reagiert.", &n.deadzone, d.deadzone, 0, 60, 5));
+        // ---- Wiimotes: wer spielt womit, kommt der Zeiger an, Bewegung, Akku
+        rows.push_back(header("Wiimotes (Spieler 2-5)"));
+        {
+            const int bt = nl_wii_bluetooth_count();
+            rows.push_back(info("Echte Wiimotes (Bluetooth)", bt ? std::to_string(bt) + " verbunden" : "keine gefunden",
+                                "Echte Wiimotes werden automatisch Spieler, sobald sie verbunden sind.\n\n"
+                                "Koppeln: Windows-Einstellungen > Bluetooth > Geraet hinzufuegen, dann an der Wiimote 1+2 (oder den roten "
+                                "Sync-Knopf im Batteriefach) druecken. Eine PIN leer lassen. Am einfachsten geht es mit einer DolphinBar (Modus 4).\n"
+                                "Fuer den Zeiger braucht die Wiimote eine Sensorleiste (oder die DolphinBar) unter/ueber dem Bildschirm."));
+            for (int i = 1; i <= 4; i++) {
+                const NLWiiSlotInfo w = nl_wii_slot(i);
+                std::string label = "Wiimote " + std::to_string(i);
+                if (!w.used) {
+                    rows.push_back(info(label, "frei", "Hier kann ein Controller, eine echte Wiimote oder ein Online-Freund mitspielen."));
+                    continue;
+                }
+                std::string v = w.name;
+                std::string help = "Art: " + w.kind + "\nGeraet: " + w.device +
+                                   "\nZeiger: " + std::string(w.pointer_seen ? "kommt an" : "nicht gesehen (Sensorleiste? Maus auf dem Bild?)") +
+                                   "\nBewegung (MotionPlus/Gyro): " + std::string(w.motion ? "ja" : "nein") +
+                                   "\nNunchuk: " + std::string(w.nunchuk ? "ja" : "nein") + "   MotionPlus-Adapter: " + std::string(w.motion_plus ? "ja" : "nein");
+                if (w.battery >= 0) help += "\nAkku: " + std::to_string(w.battery) + " %";
+                v += w.pointer_seen ? "  - Zeiger ok" : "  - kein Zeiger";
+                if (w.battery >= 0 && w.battery <= 15) v += "  - Akku fast leer";
+                rows.push_back(info(label, v, help));
+            }
+        }
         rows.push_back(header("Belegung"));
         for (int i = 0; i < kNLActionCount; i++) {
             Row r;
