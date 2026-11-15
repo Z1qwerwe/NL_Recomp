@@ -13,6 +13,9 @@
 #include "input/InputManager.h"
 #include "input/api/Controller.h"
 #include "input/emulated/WiimoteController.h"
+#if HAS_WIIMOTE
+#include "input/api/Wiimote/NativeWiimoteController.h"
+#endif
 
 #include <chrono>
 #include <mutex>
@@ -104,6 +107,8 @@ struct Slot {
     bool remote = false;
     std::string name;
     std::shared_ptr<NLWiiPad> pad;
+    std::shared_ptr<ControllerBase> native;   // echte Wiimote (Bluetooth)
+    WPADDeviceType type = kWAPDevCore;
 };
 std::mutex s_mx;
 Slot s_slots[5];   // 1-4 benutzt
@@ -154,4 +159,65 @@ int nl_wii_free_slots() {
     int n = 0;
     for (int i = 1; i <= 4; i++) n += !s_slots[i].used;
     return n;
+}
+
+// ===========================================================================
+// Echte Wiimotes (Bluetooth, ueber Cemus HID-Anbindung)
+// Koppeln: Windows-Bluetooth -> "Geraet hinzufuegen" -> 1+2 an der Wiimote druecken,
+// oder eine DolphinBar im Modus 4. Fuer den Zeiger braucht man eine Sensorleiste.
+// ===========================================================================
+#if HAS_WIIMOTE
+static WPADDeviceType native_type(const std::shared_ptr<ControllerBase>& c) {
+    auto n = std::static_pointer_cast<NativeWiimoteController>(c);
+    const bool mpls = n->is_mpls_attached();
+    switch (n->get_extension()) {
+    case NativeWiimoteController::Nunchuck: return mpls ? kWAPDevMPLSFreeStyle : kWAPDevFreestyle;
+    case NativeWiimoteController::Classic: return mpls ? kWAPDevMPLSClassic : kWAPDevClassic;
+    default: return mpls ? kWAPDevMPLS : kWAPDevCore;
+    }
+}
+#endif
+
+void nl_wii_update_native() {
+#if HAS_WIIMOTE
+    auto& im = InputManager::instance();
+    auto provider = im.get_api_provider(InputAPI::Wiimote);
+    if (!provider) return;
+    std::scoped_lock l(s_mx);
+    // getrennte Wiimotes freigeben, Erweiterung (Nunchuk/MotionPlus) nachfuehren
+    for (int i = 1; i <= 4; i++) {
+        Slot& sl = s_slots[i];
+        if (!sl.used || !sl.native) continue;
+        if (!sl.native->is_connected()) {
+            cemuLog_log(LogType::Force, "NL: echte Wiimote {} getrennt", i);
+            InputManager::instance().delete_controller(i);
+            sl = {};
+            continue;
+        }
+        const WPADDeviceType t = native_type(sl.native);
+        if (t != sl.type) {
+            if (auto wm = std::dynamic_pointer_cast<WiimoteController>(im.get_controller(i))) wm->set_device_type(t);
+            sl.type = t;
+        }
+    }
+    // neue Wiimotes einhaengen
+    for (auto& c : provider->get_controllers()) {
+        if (!c->is_connected()) continue;
+        bool known = false;
+        for (int i = 1; i <= 4; i++) known |= s_slots[i].native && s_slots[i].native->uuid() == c->uuid();
+        if (known) continue;
+        for (int i = 1; i <= 4; i++) {
+            if (s_slots[i].used) continue;
+            auto wm = std::dynamic_pointer_cast<WiimoteController>(im.set_controller(i, EmulatedController::Type::Wiimote));
+            if (!wm) break;
+            wm->add_controller(c);
+            wm->set_default_mapping(c);
+            const WPADDeviceType t = native_type(c);
+            wm->set_device_type(t);
+            s_slots[i] = {true, false, "Wiimote (Bluetooth)", nullptr, c, t};
+            cemuLog_log(LogType::Force, "NL: echte Wiimote ist Spieler {}", i);
+            break;
+        }
+    }
+#endif
 }

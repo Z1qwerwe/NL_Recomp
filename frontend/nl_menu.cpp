@@ -303,7 +303,9 @@ static void build_online(std::vector<Row>& rows) {
         if (!si.used) continue;
         std::string label = "Wiimote " + std::to_string(slot) + ": " + si.name;
         if (!si.remote) {
-            rows.push_back(info(label, "hier am PC", "Ein weiterer Controller an diesem PC."));
+            rows.push_back(info(label, "hier am PC", "Ein weiterer Controller an diesem PC. Echte Wiimotes per Bluetooth werden automatisch "
+                                "erkannt (Windows: Bluetooth -> Geraet hinzufuegen, an der Wiimote 1+2 druecken; oder eine DolphinBar im Modus 4). "
+                                "Fuer den Zeiger braucht man eine Sensorleiste."));
             continue;
         }
         for (auto& p : players) {

@@ -133,6 +133,7 @@ int nl_wii_attach(const std::string& name, bool remote, NLWiiSource src);   // 1
 void nl_wii_detach(int slot);
 NLWiiSlotInfo nl_wii_slot(int slot);
 int nl_wii_free_slots();
+void nl_wii_update_native();   // echte Wiimotes per Bluetooth einhaengen/abmelden (alle paar Sekunden)
 
 // ---------------------------------------------------------------------------
 // Online (nl_online.cpp): Raum hosten, Bild/Ton streamen, Freunde als Wiimote-Spieler

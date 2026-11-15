@@ -447,6 +447,8 @@ void nl_input_init(const std::filesystem::path& controls_path) {
 static std::set<std::string> s_assigned;
 void nl_input_hotplug() {
     auto& im = InputManager::instance();
+    static int s_native_tick = 0;
+    if (++s_native_tick % 4 == 1) nl_wii_update_native();   // echte Wiimotes alle ~2 s
     auto provider = im.get_api_provider(InputAPI::SDLController);
     if (!provider) return;
     for (auto& pad : provider->get_controllers()) {
